@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:smart_disaster_management_system/splashscreen.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/material.dart';
 import 'welcomescreen.dart';
 import 'signupscreen.dart';
 import 'login_screen.dart';
@@ -10,7 +12,10 @@ import 'alert_screen.dart';
 import 'alert_details_screen.dart';
 import 'gps_access_screen.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp();
+
   runApp(const SmartDisasterApp());
 }
 

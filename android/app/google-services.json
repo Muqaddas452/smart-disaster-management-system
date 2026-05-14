@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "311185449978",
+    "project_id": "smart-disaster-managemen-90b61",
+    "storage_bucket": "smart-disaster-managemen-90b61.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:311185449978:android:b0575253aa0d16b79a3a43",
+        "android_client_info": {
+          "package_name": "com.example.smartdisasterapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDUfTXqRu06g16XmvwkXA3SVy3_TJh5AzI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

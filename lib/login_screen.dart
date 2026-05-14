@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'forgotpassword.dart';
 import 'home_screen.dart';
 
@@ -106,7 +107,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
               const SizedBox(height: 36),
 
-              // ── Shield Avatar ────────────────────────────────────────
+              //Shield Avatar
               Container(
                 width: 110,
                 height: 110,
@@ -125,7 +126,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
               const SizedBox(height: 28),
 
-              // ── Heading & Subheading ─────────────────────────────────
+              //Heading & Subheading
               const Text(
                 'Login to Continue',
                 style: TextStyle(
@@ -148,7 +149,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
               const SizedBox(height: 36),
 
-              // ── Email Field ──────────────────────────────────────────
+              //Email Field
               _RoundedTextField(
                 controller: _emailController,
                 hintText: 'Enter your email',
@@ -158,7 +159,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
               const SizedBox(height: 16),
 
-              // ── Password Field ───────────────────────────────────────
+              //Password Field
               _RoundedTextField(
                 controller: _passwordController,
                 hintText: 'Enter your password',
@@ -179,7 +180,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
               const SizedBox(height: 28),
 
-              // ── Login Button ─────────────────────────────────────────
+              //Login Button
               SizedBox(
                 width: double.infinity,
                 height: 56,
@@ -212,7 +213,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
               const SizedBox(height: 20),
 
-              // ── Forgot Password ──────────────────────────────────────
+              //Forgot Password
               TextButton(
                 onPressed: () {
                   Navigator.push(
@@ -232,10 +233,7 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Sub-widgets
-// ─────────────────────────────────────────────────────────────────────────────
 
 class _RoundedTextField extends StatelessWidget {
   final TextEditingController controller;
