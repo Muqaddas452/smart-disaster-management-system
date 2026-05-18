@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'auth_service.dart'; // Apne project ka sahi path dein
 import 'forgotpassword.dart';
 import 'home_screen.dart';
 
@@ -25,8 +26,8 @@ class _LoginScreenState extends State<LoginScreen> {
     _passwordController.dispose();
     super.dispose();
   }
-
-  void _onLoginPressed() {
+  final AuthService _authService = AuthService();
+  void _onLoginPressed() async {
     final email = _emailController.text.trim();
     final password = _passwordController.text;
 
@@ -39,6 +40,12 @@ class _LoginScreenState extends State<LoginScreen> {
 
     // TODO: Add your authentication logic here
     debugPrint('Email: $email | Password: $password');
+    // Firebase login aur role-based routing ka logic yahan call ho raha h
+    await _authService.loginUser( // <--- Yahan 'await' b lga diya h
+      email: email,
+      password: password,
+      context: context,
+    );
   }
 
   void _onForgotPasswordPressed() {

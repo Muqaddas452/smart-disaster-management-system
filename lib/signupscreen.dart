@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import  'auth_service.dart';// Apne project ke folder structure ke mutabiq sahi path dein
+import 'profile _screen.dart';
 import 'home_screen.dart';
 
 class SignUpScreen extends StatefulWidget {
@@ -9,6 +11,8 @@ class SignUpScreen extends StatefulWidget {
 }
 
 class _SignUpScreenState extends State<SignUpScreen> {
+
+
   // Controllers
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
@@ -16,8 +20,39 @@ class _SignUpScreenState extends State<SignUpScreen> {
   final TextEditingController _passwordController = TextEditingController();
 
   // State variables
+  final AuthService _authService = AuthService();
+  bool isLoading = false;
   bool _passwordVisible = false;
   String? _selectedGender;
+
+  void _onSignUpPressed() async {
+    final email = _emailController.text.trim();
+    final password = _passwordController.text;
+
+    if (email.isEmpty || password.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please fill in email and password.'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
+    if (password.length < 6) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Password must be at least 6 characters.'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
+    setState(() { isLoading = true; });
+
+    await _authService.registerCitizen(
+      email: email,
+      password: password,
+      context: context,
+    );
+
+    if (mounted) { setState(() { isLoading = false; }); }
+  }
 
   // Color constants
   static const Color _primaryGreen = Color(0xFF2ECC40);
