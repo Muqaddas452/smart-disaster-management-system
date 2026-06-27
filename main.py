@@ -27,9 +27,6 @@ os.makedirs(MODEL_DIR, exist_ok=True)
 
 # 1. LOAD DATA
 
-print("=" * 60)
-print("  DISASTER PREDICTION — TRAINING PIPELINE")
-print("=" * 60)
 
 train_df = pd.read_csv(TRAIN_CSV)
 test_df  = pd.read_csv(TEST_CSV)
@@ -163,9 +160,6 @@ cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
 # 7. TRAIN — DISASTER TYPE
 
-print("\n" + "=" * 60)
-print("  TRAINING — DISASTER TYPE CLASSIFIER")
-print("=" * 60)
 
 best_model_type = None
 best_f1_type    = 0
@@ -189,7 +183,7 @@ for name, model in get_models().items():
         best_model_type = model
         best_name_type  = name
 
-print(f"\n✔ Best model (Type): {best_name_type}  F1={best_f1_type:.4f}")
+print(f"\n Best model (Type): {best_name_type}  F1={best_f1_type:.4f}")
 
 y_pred_type = best_model_type.predict(X_test_sc)
 print("\n── Classification Report (Disaster Type) ──")
@@ -198,9 +192,6 @@ print(classification_report(y_type_test, y_pred_type, target_names=le_type.class
 
 # 8. TRAIN — SEVERITY
 
-print("\n" + "=" * 60)
-print("  TRAINING — SEVERITY CLASSIFIER")
-print("=" * 60)
 
 best_model_sev = None
 best_f1_sev    = 0
@@ -239,7 +230,7 @@ joblib.dump(le_type,         os.path.join(MODEL_DIR, "label_encoder_type.pkl"))
 joblib.dump(le_sev,          os.path.join(MODEL_DIR, "label_encoder_severity.pkl"))
 joblib.dump(FEATURE_COLS,    os.path.join(MODEL_DIR, "feature_cols.pkl"))
 
-print(f"\n✔ Artifacts saved to '{MODEL_DIR}/'")
+print(f"\n Artifacts saved to '{MODEL_DIR}/'")
 print("   model_disaster_type.pkl")
 print("   model_severity.pkl")
 print("   scaler.pkl")
@@ -270,5 +261,5 @@ plt.tight_layout()
 plot_path = os.path.join(MODEL_DIR, "evaluation_plots.png")
 plt.savefig(plot_path, dpi=150, bbox_inches="tight")
 plt.show()
-print(f"\n✔ Plot saved → {plot_path}")
-print("\n✔ Training complete.")
+print(f"\n Plot saved → {plot_path}")
+print("\n Training complete.")
