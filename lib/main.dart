@@ -9,6 +9,7 @@ import 'login_screen.dart';
 import 'forgotpassword.dart';
 import 'home_screen.dart';
 import 'report_screen.dart';
+import 'safety_tips_screen.dart';
 import 'alert_screen.dart';
 import 'alert_details_screen.dart';
 import 'gps_access_screen.dart';

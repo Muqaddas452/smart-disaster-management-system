@@ -1,12 +1,15 @@
+// lib/screens/reporte_screen.dart
+// Manual Emergency Reporting Screen — Online/Offline support with Auto Sync
+
 import 'package:flutter/material.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:geolocator/geolocator.dart'; // GPS Location k liye
-import 'package:smart_disaster_management_system/database/db_Helper.dart'; // SQLite Helper import krien (Sahi path check kr lein)
+import 'package:geolocator/geolocator.dart';
+import 'dart:async';
 
-import 'gps_access_screen.dart';
+import '../database/db_report_helper.dart';
+import '../services/report_sync_service.dart';
 import 'report_status_screen.dart';
 import 'offline_screen.dart';
 
@@ -14,11 +17,10 @@ class ReporteScreen extends StatefulWidget {
   const ReporteScreen({super.key});
 
   @override
-  _ManualEmergencyReportingScreenState createState() =>
-      _ManualEmergencyReportingScreenState();
+  State<ReporteScreen> createState() => _ReporteScreenState();
 }
 
-class _ManualEmergencyReportingScreenState extends State<ReporteScreen> {
+class _ReporteScreenState extends State<ReporteScreen> {
   // ── Controllers
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _phoneController = TextEditingController();
@@ -28,12 +30,16 @@ class _ManualEmergencyReportingScreenState extends State<ReporteScreen> {
   // ── State
   String? _selectedEmergencyType;
   String _severityLevel = 'Low';
-  bool _isSubmitting = false; // Loading indicator toggle krne k liye
+  bool _isSubmitting = false;
+  int _unsyncedCount = 0; // Pending local reports ka count
 
-  // Auto-detected location state
+  // ── Location State
   String _autoDetectedLocation = 'Detecting location... Please wait.';
   double? _latitude;
   double? _longitude;
+
+  // ── Connectivity Listener
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
 
   // ── Constants
   static const _primaryGreen = Color(0xFF2E7D32);
@@ -47,15 +53,22 @@ class _ManualEmergencyReportingScreenState extends State<ReporteScreen> {
     'Earthquake',
     'Flood',
     'Storm',
-    'Other', // Fixed missing comma in your array
+    'Other',
   ];
 
   static const List<String> _severityLevels = ['Low', 'Medium', 'High'];
 
+  // ════════════════════════════════════════
+  // LIFECYCLE
+  // ════════════════════════════════════════
+
   @override
   void initState() {
     super.initState();
-    _getUserLocation(); // Screen khulte hi location detect krna shuru kr de ga
+    _getUserLocation();
+    _loadUnsyncedCount();
+    _startConnectivityListener(); // Internet aate hi auto-sync
+    _trySyncOnStart();             // App open par bhi sync try karo
   }
 
   @override
@@ -63,52 +76,129 @@ class _ManualEmergencyReportingScreenState extends State<ReporteScreen> {
     _nameController.dispose();
     _phoneController.dispose();
     _descriptionController.dispose();
+    _connectivitySubscription?.cancel();
     super.dispose();
   }
 
-  // ── BACKEND LOGIC: GPS Location Popup Check
-  Future<void> _getUserLocation() async {
-    bool serviceEnabled;
-    LocationPermission permission;
+  // ════════════════════════════════════════
+  // BACKEND: Pending count load karna
+  // ════════════════════════════════════════
 
-    // Check krien k kya mobile ki location/GPS service manual on h?
-    serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      // Agar GPS off h to yeh line automatic mobile ka setting popup/toggle system open krwa degi
-      serviceEnabled = await Geolocator.openLocationSettings();
-      if (!serviceEnabled) {
-        setState(() { _autoDetectedLocation = 'GPS is disabled. Turn it on manually.'; });
-        return;
-      }
-    }
+  Future<void> _loadUnsyncedCount() async {
+    final count = await DBReportHelper.getUnsyncedCount();
+    if (mounted) setState(() => _unsyncedCount = count);
+  }
 
-    permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
-        setState(() { _autoDetectedLocation = 'Location permission denied.'; });
-        return;
-      }
-    }
+  // ════════════════════════════════════════
+  // BACKEND: App start par sync try karo
+  // ════════════════════════════════════════
 
-    try {
-      // Current High Accuracy Coordinates fetch krna
-      Position position = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.high);
-
-      setState(() {
-        _latitude = position.latitude;
-        _longitude = position.longitude;
-        _autoDetectedLocation = 'Lat: ${_latitude!.toStringAsFixed(4)}, Lon: ${_longitude!.toStringAsFixed(4)}';
-      });
-    } catch (e) {
-      setState(() { _autoDetectedLocation = 'Failed to get location automatically.'; });
+  Future<void> _trySyncOnStart() async {
+    final result = await ReportSyncService.syncPendingReports();
+    if (result.syncedCount > 0 && mounted) {
+      _showSnackBar('✅ ${result.syncedCount} offline report(s) synced to Firebase!');
+      _loadUnsyncedCount(); // Count update karo
     }
   }
 
-  // ── BACKEND LOGIC: SUBMIT REPORT (FIRESTORE vs SQLITE)
+  // ════════════════════════════════════════
+  // BACKEND: Connectivity Stream Listener
+  // Jaise hi WiFi/Mobile data aaye, sync trigger hoga
+  // ════════════════════════════════════════
+
+  void _startConnectivityListener() {
+    _connectivitySubscription = ReportSyncService.connectivityStream.listen(
+          (results) async {
+        final isOnline = results.isNotEmpty &&
+            !results.contains(ConnectivityResult.none);
+
+        if (isOnline) {
+          final result = await ReportSyncService.syncPendingReports();
+          if (result.syncedCount > 0 && mounted) {
+            _showSnackBar('📡 ${result.syncedCount} pending report(s) synced automatically!');
+            _loadUnsyncedCount();
+          }
+        }
+      },
+    );
+  }
+
+  // ════════════════════════════════════════
+  // BACKEND: GPS Location Auto-Detect
+  // ════════════════════════════════════════
+
+  Future<void> _getUserLocation() async {
+    // Step 1: GPS service enabled hai?
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      serviceEnabled = await Geolocator.openLocationSettings();
+      if (!serviceEnabled) {
+        if (mounted) {
+          setState(() {
+            _autoDetectedLocation = 'GPS is disabled. Please turn it on manually.';
+          });
+        }
+        return;
+      }
+    }
+
+    // Step 2: Permission check
+    LocationPermission permission = await Geolocator.checkPermission();
+
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        if (mounted) {
+          setState(() {
+            _autoDetectedLocation = 'Location permission denied.';
+          });
+        }
+        return;
+      }
+    }
+
+    // Step 3: Permanently denied — settings kholna parega
+    if (permission == LocationPermission.deniedForever) {
+      if (mounted) {
+        setState(() {
+          _autoDetectedLocation =
+          'Location permanently denied. Enable from app settings.';
+        });
+        // App settings kholo
+        await Geolocator.openAppSettings();
+      }
+      return;
+    }
+
+    // Step 4: Coordinates fetch karo
+    try {
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      if (mounted) {
+        setState(() {
+          _latitude = position.latitude;
+          _longitude = position.longitude;
+          _autoDetectedLocation =
+          'Lat: ${_latitude!.toStringAsFixed(5)}, Lon: ${_longitude!.toStringAsFixed(5)}';
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _autoDetectedLocation = 'Could not fetch location. Try again.';
+        });
+      }
+    }
+  }
+
+  // ════════════════════════════════════════
+  // BACKEND: SUBMIT REPORT
+  // ════════════════════════════════════════
+
   Future<void> _handleSubmit() async {
-    // 1. Validation Check: Sari fields fill hona zaroori h
+    // 1. Form validation
     if (!_formKey.currentState!.validate()) return;
 
     if (_selectedEmergencyType == null) {
@@ -116,38 +206,48 @@ class _ManualEmergencyReportingScreenState extends State<ReporteScreen> {
       return;
     }
 
-    setState(() { _isSubmitting = true; });
+    setState(() => _isSubmitting = true);
 
-    // Map create krna data ka
+    // 2. Report data map — Firebase field names match kiye (manual_reports collection)
     final reportData = {
       'name': _nameController.text.trim(),
       'phone': _phoneController.text.trim(),
-      'emergencyType': _selectedEmergencyType,
+      'emergencyType': _selectedEmergencyType,   // local DB mein
       'description': _descriptionController.text.trim(),
-      'severity': _severityLevel,
+      'severity': _severityLevel,                // local DB mein
       'location': _autoDetectedLocation,
+      'latitude': _latitude,
+      'longitude': _longitude,
       'timestamp': DateTime.now().toIso8601String(),
     };
 
     try {
-      // 2. Connectivity Check (Internet check)
+      // 3. Internet check (connectivity_plus 6.x — list return karta hai)
       final connectivityResult = await Connectivity().checkConnectivity();
-      final isOnline = connectivityResult != ConnectivityResult.none;
+      final isOnline = connectivityResult.isNotEmpty &&
+          !connectivityResult.contains(ConnectivityResult.none);
 
       if (isOnline) {
-        // ONLINE FLOW: Direct Firestore ki 'reports' collection mien save hoga
-        String uid = FirebaseAuth.instance.currentUser?.uid ?? 'anonymous';
+        // ── ONLINE: Firestore ko directly bhejo
+        final uid = FirebaseAuth.instance.currentUser?.uid ?? 'anonymous';
 
-        await FirebaseFirestore.instance.collection('reports').add({
-          ...reportData,
+        await FirebaseFirestore.instance.collection('manual_reports').add({
+          'name': reportData['name'],
+          'phone': reportData['phone'],
+          'incident_type': reportData['emergencyType'],   // Firebase field
+          'description': reportData['description'],
+          'severity_level': reportData['severity'],        // Firebase field
+          'location': reportData['location'],
+          'latitude': reportData['latitude'],
+          'longitude': reportData['longitude'],
+          'timestamp': FieldValue.serverTimestamp(),       // Firebase proper timestamp
+          'localTimestamp': reportData['timestamp'],
           'reportedBy': uid,
-          'status': 'Pending', // Admin panel pr alert show krne k liye pending status
-          'serverTimestamp': FieldValue.serverTimestamp(),
-          'latitude': _latitude,
-          'longitude': _longitude,
+          'status': 'Pending',
+          'syncedFromOffline': false,
         });
 
-        _showSnackBar('Emergency report submitted successfully to Admin Panel!');
+        _showSnackBar('✅ Emergency report submitted successfully!');
 
         if (mounted) {
           Navigator.pushReplacement(
@@ -156,10 +256,14 @@ class _ManualEmergencyReportingScreenState extends State<ReporteScreen> {
           );
         }
       } else {
-        // OFFLINE FLOW: Local SQLite DB mien save hoga
-        await DBHelper.insertReport(reportData);
+        // ── OFFLINE: SQLite mein save karo
+        await DBReportHelper.insertReport(reportData);
+        await _loadUnsyncedCount(); // Count update karo
 
-        _showSnackBar('No internet! Report saved locally. Will sync automatically.', isError: true);
+        _showSnackBar(
+          '📴 No internet! Report saved locally. Will auto-sync when online.',
+          isError: true,
+        );
 
         if (mounted) {
           Navigator.pushReplacement(
@@ -171,24 +275,31 @@ class _ManualEmergencyReportingScreenState extends State<ReporteScreen> {
     } catch (e) {
       _showSnackBar('Something went wrong: $e', isError: true);
     } finally {
-      if (mounted) {
-        setState(() { _isSubmitting = false; });
-      }
+      if (mounted) setState(() => _isSubmitting = false);
     }
   }
 
+  // ════════════════════════════════════════
+  // HELPERS
+  // ════════════════════════════════════════
+
   void _showSnackBar(String message, {bool isError = false}) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
-        backgroundColor: isError ? Colors.red : _primaryGreen,
+        backgroundColor: isError ? Colors.redAccent : _primaryGreen,
         behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 3),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
     );
   }
 
-  // ── Build
+  // ════════════════════════════════════════
+  // UI BUILD
+  // ════════════════════════════════════════
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -202,6 +313,8 @@ class _ManualEmergencyReportingScreenState extends State<ReporteScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // Pending sync banner — agar koi local reports hain
+                if (_unsyncedCount > 0) _buildSyncBanner(),
                 _buildSubtitle(),
                 const SizedBox(height: 24),
                 _buildLabel('Your Name'),
@@ -221,8 +334,12 @@ class _ManualEmergencyReportingScreenState extends State<ReporteScreen> {
                   hint: 'Enter your phone number',
                   keyboardType: TextInputType.phone,
                   validator: (v) {
-                    if (v == null || v.trim().isEmpty) return 'Phone number is required';
-                    if (v.trim().length < 7) return 'Enter a valid phone number';
+                    if (v == null || v.trim().isEmpty) {
+                      return 'Phone number is required';
+                    }
+                    if (v.trim().length < 7) {
+                      return 'Enter a valid phone number';
+                    }
                     return null;
                   },
                 ),
@@ -253,7 +370,31 @@ class _ManualEmergencyReportingScreenState extends State<ReporteScreen> {
     );
   }
 
-  // ── AppBar
+  // ── Sync Banner — pending reports dikhane k liye
+  Widget _buildSyncBanner() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.orange.shade50,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.orange.shade300),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.cloud_off_rounded, color: Colors.orange, size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '$_unsyncedCount report(s) pending sync. Will upload when internet is available.',
+              style: const TextStyle(fontSize: 12, color: Colors.black87),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   PreferredSizeWidget _buildAppBar(BuildContext context) {
     return AppBar(
       backgroundColor: _bgColor,
@@ -274,7 +415,6 @@ class _ManualEmergencyReportingScreenState extends State<ReporteScreen> {
     );
   }
 
-  // ── Subtitle
   Widget _buildSubtitle() {
     return const Text(
       'Please provide details of the incident.',
@@ -282,7 +422,6 @@ class _ManualEmergencyReportingScreenState extends State<ReporteScreen> {
     );
   }
 
-  // ── Label
   Widget _buildLabel(String text) {
     return Text(
       text,
@@ -294,7 +433,6 @@ class _ManualEmergencyReportingScreenState extends State<ReporteScreen> {
     );
   }
 
-  // ── Text Field
   Widget _buildTextField({
     required TextEditingController controller,
     required String hint,
@@ -310,7 +448,6 @@ class _ManualEmergencyReportingScreenState extends State<ReporteScreen> {
     );
   }
 
-  // ── Dropdown
   Widget _buildDropdown() {
     return DropdownButtonFormField<String>(
       value: _selectedEmergencyType,
@@ -334,7 +471,6 @@ class _ManualEmergencyReportingScreenState extends State<ReporteScreen> {
     );
   }
 
-  // ── Description Field
   Widget _buildDescriptionField() {
     return TextFormField(
       controller: _descriptionController,
@@ -344,17 +480,16 @@ class _ManualEmergencyReportingScreenState extends State<ReporteScreen> {
       style: const TextStyle(fontSize: 14, color: Colors.black87),
       validator: (v) =>
       (v == null || v.trim().isEmpty) ? 'Description is required' : null,
-      decoration: _inputDecoration('Provide a detailed description'),
+      decoration: _inputDecoration('Provide a detailed description of the incident'),
     );
   }
 
-  // ── Severity Row
   Widget _buildSeverityRow() {
     return Row(
       children: _severityLevels.map((level) {
         final isSelected = _severityLevel == level;
         return Padding(
-          padding: const EdgeInsets.only(right: 24),
+          padding: const EdgeInsets.only(right: 20),
           child: GestureDetector(
             onTap: () => setState(() => _severityLevel = level),
             child: Row(
@@ -382,7 +517,6 @@ class _ManualEmergencyReportingScreenState extends State<ReporteScreen> {
     );
   }
 
-  // ── Location Tile
   Widget _buildLocationTile() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -401,12 +535,23 @@ class _ManualEmergencyReportingScreenState extends State<ReporteScreen> {
               style: const TextStyle(fontSize: 13, color: Colors.black87),
             ),
           ),
+          // Refresh button — location dobara fetch karo
+          IconButton(
+            icon: const Icon(Icons.refresh_rounded, color: _primaryGreen, size: 20),
+            onPressed: () {
+              setState(() {
+                _autoDetectedLocation = 'Detecting location... Please wait.';
+              });
+              _getUserLocation();
+            },
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+          ),
         ],
       ),
     );
   }
 
-  // ── Submit Button
   Widget _buildSubmitButton() {
     return SizedBox(
       width: double.infinity,
@@ -415,11 +560,20 @@ class _ManualEmergencyReportingScreenState extends State<ReporteScreen> {
           backgroundColor: _primaryGreen,
           foregroundColor: Colors.white,
           padding: const EdgeInsets.symmetric(vertical: 16),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(30),
+          ),
         ),
         onPressed: _isSubmitting ? null : _handleSubmit,
         child: _isSubmitting
-            ? const CircularProgressIndicator(color: Colors.white)
+            ? const SizedBox(
+          height: 22,
+          width: 22,
+          child: CircularProgressIndicator(
+            color: Colors.white,
+            strokeWidth: 2.5,
+          ),
+        )
             : const Text(
           'Submit Emergency Report',
           style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
@@ -428,14 +582,14 @@ class _ManualEmergencyReportingScreenState extends State<ReporteScreen> {
     );
   }
 
-  // ── Shared Input Decoration
   InputDecoration _inputDecoration(String? hint) {
     return InputDecoration(
       hintText: hint,
       hintStyle: const TextStyle(color: _hintGreen, fontSize: 14),
       filled: true,
       fillColor: Colors.white,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      contentPadding:
+      const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
         borderSide: const BorderSide(color: _borderGreen, width: 1.2),

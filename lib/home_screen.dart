@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:smart_disaster_management_system/safety_tips_screen.dart';
 import 'report_screen.dart';
 import 'alert_screen.dart';
 
@@ -445,7 +446,14 @@ class _SafetyTipsButton extends StatelessWidget {
     return SizedBox(
       width: double.infinity,
       child: ElevatedButton.icon(
-        onPressed: onTap,
+        // Direct yahan navigation laga di
+        onPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => SafetyTipsScreen()),
+          );
+        },
+
         icon: const Icon(Icons.shield_outlined, size: 20),
         label: const Text('View Critical Safety Tips',
             style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
