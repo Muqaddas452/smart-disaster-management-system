@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'report_screen.dart';
 import 'alert_screen.dart';
+import 'widgets/map/disaster_map.dart';
+import 'map_screen.dart';
 
 class AppColors {
   static const Color primary = Color(0xFF1B5E20);
@@ -37,6 +39,16 @@ class _HomeScreenState extends State<HomeScreen> {
     _NavItem(icon: Icons.person_outline, label: 'Profile'),
   ];
   void _onNavTap(int index) {
+    if (index == 1) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => const MapScreen(),
+        ),
+      );
+      return;
+    }
+
     if (index == 2) {
       Navigator.push(
         context,
@@ -46,11 +58,23 @@ class _HomeScreenState extends State<HomeScreen> {
       );
       return;
     }
+
     if (index == 3) {
-      Navigator.push(context,
-          MaterialPageRoute(builder: (_) => const AlertsScreen()));
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => const AlertsScreen(),
+        ),
+      );
       return;
     }
+
+    // Add your Profile screen here if needed
+    if (index == 4) {
+      // Navigator.push(...);
+      return;
+    }
+
     setState(() => _selectedIndex = index);
   }
   @override
@@ -298,34 +322,17 @@ class _LiveMapCard extends StatelessWidget {
               ],
             ),
           ),
+
           ClipRRect(
             borderRadius: const BorderRadius.only(
               bottomLeft: Radius.circular(12),
               bottomRight: Radius.circular(12),
             ),
-            child: Container(
+            child: const SizedBox(
               height: 200,
               width: double.infinity,
-              color: const Color(0xFFD9E8D9),
-              child: Stack(
-                children: [
-                  CustomPaint(
-                    size: const Size(double.infinity, 200),
-                    painter: _FakeMapPainter(),
-                  ),
-                  ..._mapPins.map((pin) => _MapPin(pin: pin)),
-                  Positioned(
-                    right: 10,
-                    bottom: 40,
-                    child: Column(
-                      children: [
-                        _MapZoomBtn(icon: Icons.add),
-                        const SizedBox(height: 4),
-                        _MapZoomBtn(icon: Icons.remove),
-                      ],
-                    ),
-                  ),
-                ],
+              child: DisasterMap(
+                isAdmin: false,
               ),
             ),
           ),
