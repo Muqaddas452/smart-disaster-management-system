@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:smart_disaster_management_system/safety_tips_screen.dart';
 import 'report_screen.dart';
 import 'alert_screen.dart';
+
+// TODO: ise user ke actual profile/selected city se dynamic banayen
+const String kCurrentDistrict = "Karachi";
 
 class AppColors {
   static const Color primary = Color(0xFF1B5E20);
@@ -38,6 +42,8 @@ class _HomeScreenState extends State<HomeScreen> {
     _NavItem(icon: Icons.person_outline, label: 'Profile'),
   ];
   void _onNavTap(int index) {
+    setState(() => _selectedIndex = index);
+
     if (index == 2) {
       Navigator.push(
         context,
@@ -52,7 +58,6 @@ class _HomeScreenState extends State<HomeScreen> {
           MaterialPageRoute(builder: (_) => const AlertsScreen()));
       return;
     }
-    setState(() => _selectedIndex = index);
   }
   @override
   Widget build(BuildContext context) {
@@ -67,11 +72,7 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const _AlertBanner(
-                    title: 'ALERT: Heatwave Warning in Your Area',
-                    subtitle:
-                    'Take precautions and stay hydrated. Avoid direct sunlight during peak hours.',
-                  ),
+                  const _LiveAlertBanner(district: kCurrentDistrict),
                   const SizedBox(height: 16),
                   const Padding(
                     padding: EdgeInsets.symmetric(horizontal: 16),
@@ -197,12 +198,87 @@ class _AppTopBar extends StatelessWidget {
   }
 }
 
+// Live Alert Banner — Firestore ke latest_alerts/{district} document se live data
+class _LiveAlertBanner extends StatelessWidget {
+  final String district;
+  const _LiveAlertBanner({required this.district});
+
+  (String, String, Color)? _mapDisasterToBanner(Map<String, dynamic> data) {
+    final disaster = data["disaster"] as String? ?? "Normal";
+    final risk = data["risk"] as String? ?? "";
+
+    if (disaster == "Normal") return null; // koi disaster nahi -> banner hide
+
+    switch (disaster) {
+      case "Flood":
+        return (
+        "ALERT: Flood Risk in Your Area",
+        "Flooding conditions detected ($risk risk). Follow official evacuation guidance if advised.",
+        AppColors.callRed,
+        );
+      case "Storm":
+        return (
+        "ALERT: Storm Warning in Your Area",
+        "Storm conditions detected ($risk risk). Stay indoors and avoid open areas.",
+        AppColors.alertOrange,
+        );
+      case "Heatwave":
+        return (
+        "ALERT: Heatwave Warning in Your Area",
+        "Take precautions and stay hydrated. Avoid direct sunlight during peak hours.",
+        AppColors.alertOrange,
+        );
+      case "Heavy Rains":
+        return (
+        "ALERT: Heavy Rain in Your Area",
+        "Heavy rainfall detected ($risk risk). Drive carefully and avoid low-lying areas.",
+        AppColors.alertOrange,
+        );
+      default:
+        return (
+        "ALERT: $disaster",
+        "Risk level: $risk. Stay updated with official bulletins.",
+        AppColors.alertOrange,
+        );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<DocumentSnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection("latest_alerts")
+          .doc(district)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData || !snapshot.data!.exists) {
+          return const SizedBox.shrink();
+        }
+
+        final data = snapshot.data!.data() as Map<String, dynamic>?;
+        if (data == null) return const SizedBox.shrink();
+
+        final banner = _mapDisasterToBanner(data);
+        if (banner == null) return const SizedBox.shrink();
+
+        final (title, subtitle, color) = banner;
+        return _AlertBanner(title: title, subtitle: subtitle, color: color);
+      },
+    );
+  }
+}
+
 // Alert Banner
 class _AlertBanner extends StatelessWidget {
   final String title;
   final String subtitle;
+  final Color color;
 
-  const _AlertBanner({required this.title, required this.subtitle});
+  const _AlertBanner({
+    required this.title,
+    required this.subtitle,
+    this.color = AppColors.alertOrange,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -216,15 +292,15 @@ class _AlertBanner extends StatelessWidget {
             width: 4,
             height: 52,
             decoration: BoxDecoration(
-              color: AppColors.alertOrange,
+              color: color,
               borderRadius: BorderRadius.circular(4),
             ),
           ),
           const SizedBox(width: 12),
-          const Padding(
-            padding: EdgeInsets.only(top: 2),
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
             child: Icon(Icons.warning_amber_rounded,
-                color: AppColors.alertOrange, size: 22),
+                color: color, size: 22),
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -698,7 +774,6 @@ class _BottomNav extends StatelessWidget {
         children: List.generate(items.length, (index) {
           final item = items[index];
           final isSelected = index == selectedIndex;
-          final isReport = item.label == 'Report';
 
           return GestureDetector(
             onTap: () => onTap(index),
@@ -706,22 +781,11 @@ class _BottomNav extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (isReport)
-                  Container(
-                    width: 44,
-                    height: 44,
-                    decoration: BoxDecoration(
-                      color: AppColors.primary,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Icon(item.icon, color: Colors.white, size: 22),
-                  )
-                else
-                  Icon(item.icon,
-                      size: 24,
-                      color: isSelected
-                          ? AppColors.primary
-                          : AppColors.textGrey),
+                Icon(item.icon,
+                    size: 24,
+                    color: isSelected
+                        ? AppColors.primary
+                        : AppColors.textGrey),
                 const SizedBox(height: 4),
                 Text(
                   item.label,
@@ -741,3 +805,26 @@ class _BottomNav extends StatelessWidget {
     );
   }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
