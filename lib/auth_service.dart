@@ -1,49 +1,60 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart'; // to read/write Firestore database
+import 'package:firebase_auth/firebase_auth.dart'; // to create/sign in Firebase Auth accounts
+import 'package:flutter/material.dart'; // needed for BuildContext and SnackBar
 
 class AuthService {
-  final FirebaseAuth _auth = FirebaseAuth.instance;
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance; // shortcut to Firebase Auth
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance; // shortcut to Firestore
 
   // ========================================================
   // 1. CITIZEN REGISTRATION (SIGN UP)
   // ========================================================
-  Future<void> registerCitizen({
+  Future<bool> registerCitizen({
     required String email,
     required String password,
+    required String name,
+    required String dob,
+    required String gender,
     required BuildContext context,
   }) async {
     try {
-      // Step A: Firebase Auth mien naya account create krna
+      // Step A: create the account in Firebase Authentication
       UserCredential userCredential = await _auth.createUserWithEmailAndPassword(
         email: email,
         password: password,
       );
 
-      String uid = userCredential.user!.uid;
+      String uid = userCredential.user!.uid; // Firebase's unique ID for this user
 
-      // Step B: Firestore mien 'Users' collection mien same UID se doc banana
-      // NOTE: Agar console mien collection ka naam 'users' (small u) hai to yahan 'users' kr dein
-      await _firestore.collection('Users').doc(uid).set({
+      // Step B: save this citizen's full initial data in "citizens" collection
+      await _firestore.collection('citizens').doc(uid).set({
         'email': email,
-        'role': 'citizen',
+        'name': name,
+        'dob': dob,
+        'gender': gender,
         'isProfileComplete': false,
         'createdAt': FieldValue.serverTimestamp(),
       });
 
-      // Step C: Naye citizen ko direct Profile Completion Screen pr bhejna
-      Navigator.pushReplacementNamed(context, '/profileCompletion');
+      // Step C: create an entry in "authIndex"
+      await _firestore.collection('authIndex').doc(uid).set({
+        'uid': uid,
+        'role': 'citizen',
+        'collection': 'citizens',
+      });
 
+      return true; // Indicate success so calling UI handles FCM & navigation smoothly
     } on FirebaseAuthException catch (e) {
       _showSnackBar(context, e.message ?? "Registration failed", Colors.red);
+      return false;
     } catch (e) {
       _showSnackBar(context, "An unexpected error occurred", Colors.red);
+      return false;
     }
   }
 
   // ========================================================
-  // 2. LOGIN & ROLE-BASED VERIFICATION WITH ERROR MESSAGES
+  // 2. LOGIN & ROLE-BASED VERIFICATION
   // ========================================================
   Future<void> loginUser({
     required String email,
@@ -51,7 +62,7 @@ class AuthService {
     required BuildContext context,
   }) async {
     try {
-      // Step A: Firebase Auth mien sign in krna
+      // Step A: sign in with Firebase Authentication
       UserCredential userCredential = await _auth.signInWithEmailAndPassword(
         email: email,
         password: password,
@@ -59,50 +70,48 @@ class AuthService {
 
       String uid = userCredential.user!.uid;
 
-      // Step B: Firestore se logged-in user ka document fetch krna
-      DocumentSnapshot userDoc = await _firestore.collection('Users').doc(uid).get();
+      // Step B: check "authIndex" first to find out this user's role
+      DocumentSnapshot authIndexDoc =
+      await _firestore.collection('authIndex').doc(uid).get();
 
-      if (userDoc.exists) {
-        String role = userDoc.get('role');
+      if (!authIndexDoc.exists) {
+        _showSnackBar(context, "User role details not found in database.", Colors.red);
+        await _auth.signOut();
+        return;
+      }
 
-        // Step C: Role check krna aur screens k mutabiq handle krna
-        if (role == 'admin') {
-          // Admin ki screen nahi hai, is liye error/info message show krwa rahe hien
-          _showSnackBar(
-              context,
-              "Verification Successful: Welcome Admin! (Dashboard is under development)",
-              Colors.blueGrey
-          );
-          // Chunkay screen nahi hai, hum user ko auth se signout kr dete hien takay state clear rahe
-          await _auth.signOut();
-        }
-        else if (role == 'rescue_team') {
-          // Rescue Team ki screen nahi hai, is liye error/info message show krwa rahe hien
-          _showSnackBar(
-              context,
-              "Verification Successful: Welcome Rescue Member! (Module coming soon)",
-              Colors.teal
-          );
-          await _auth.signOut();
-        }
-        else if (role == 'citizen') {
-          // Citizen ki verification (Profile complete hai ya nahi)
-          bool isComplete = userDoc.get('isProfileComplete') ?? false;
+      final String role = authIndexDoc.get('role'); // 'citizen', 'rescue_team', or 'admin'
 
+      // Step C: handle each role differently
+      if (role == 'rescue_team') {
+        _showSnackBar(
+          context,
+          "This is a rescue team account. Please use the Rescue Team login.",
+          Colors.orange,
+        );
+        await _auth.signOut();
+      } else if (role == 'admin') {
+        _showSnackBar(
+          context,
+          "Verification Successful: Welcome Admin! (Dashboard is under development)",
+          Colors.blueGrey,
+        );
+        await _auth.signOut();
+      } else if (role == 'citizen') {
+        DocumentSnapshot citizenDoc =
+        await _firestore.collection('citizens').doc(uid).get();
+
+        bool isComplete = (citizenDoc.data() as Map<String, dynamic>?)?['isProfileComplete'] ?? false;
+
+        if (context.mounted) {
           if (isComplete) {
-            // Agar complete hai to Home Screen pr bhejien
             Navigator.pushReplacementNamed(context, '/citizenHome');
           } else {
-            // Agar complete nahi hai to Completion Screen pr bhejien
             _showSnackBar(context, "Please complete your profile first.", Colors.orange);
             Navigator.pushReplacementNamed(context, '/profileCompletion');
           }
         }
-      } else {
-        _showSnackBar(context, "User role details not found in database.", Colors.red);
-        await _auth.signOut();
       }
-
     } on FirebaseAuthException catch (e) {
       _showSnackBar(context, e.message ?? "Login failed", Colors.red);
     } catch (e) {
@@ -122,8 +131,7 @@ class AuthService {
     try {
       String uid = _auth.currentUser!.uid;
 
-      // Firestore mien basic data update krna aur isProfileComplete ko true krna
-      await _firestore.collection('Users').doc(uid).update({
+      await _firestore.collection('citizens').doc(uid).update({
         'name': name,
         'phone': phone,
         'address': address,
@@ -132,16 +140,17 @@ class AuthService {
 
       _showSnackBar(context, "Profile verified and completed successfully!", Colors.green);
 
-      // Direct Citizen ki main Home Screen pr navigate krna
-      Navigator.pushReplacementNamed(context, '/citizenHome');
-
+      if (context.mounted) {
+        Navigator.pushReplacementNamed(context, '/citizenHome');
+      }
     } catch (e) {
       _showSnackBar(context, "Failed to update profile: $e", Colors.red);
     }
   }
 
-  // Custom Snackbar Helper function
+  // helper function to show a small colored popup message
   void _showSnackBar(BuildContext context, String message, Color color) {
+    if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message, style: const TextStyle(fontSize: 15)),

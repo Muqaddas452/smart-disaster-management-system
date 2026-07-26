@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'auth_service.dart'; // Apne project ka sahi path dein
+import '../auth_service.dart';
 import 'forgotpassword.dart';
-import 'home_screen.dart';
+import '../../citizen_screens/citizen_home_screen.dart';
+import '../rescue_team/rescue_login_screen.dart'; // NEW: needed for the rescue team login link
+import '../services/fcm_token_service.dart'; // NEW: Apne project ke folder structure ke mutabiq sahi path dein
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -26,7 +28,9 @@ class _LoginScreenState extends State<LoginScreen> {
     _passwordController.dispose();
     super.dispose();
   }
+
   final AuthService _authService = AuthService();
+
   void _onLoginPressed() async {
     final email = _emailController.text.trim();
     final password = _passwordController.text;
@@ -38,19 +42,22 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
-    // TODO: Add your authentication logic here
-    debugPrint('Email: $email | Password: $password');
-    // Firebase login aur role-based routing ka logic yahan call ho raha h
-    await _authService.loginUser( // <--- Yahan 'await' b lga diya h
+    // this calls the real login logic (Firebase + authIndex role check)
+    await _authService.loginUser(
       email: email,
       password: password,
       context: context,
     );
-  }
 
-  void _onForgotPasswordPressed() {
-    // TODO: Navigate to forgot password screen
-    debugPrint('Forgot Password tapped');
+    // NEW: Agar login successful raha ho to Firebase Auth mein currentUser
+    // set ho chuka hoga. Us user ka FCM token generate karke Firestore ke
+    // citizens collection mein save kar do, aur future refresh ke liye
+    // listener bhi laga do.
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser != null) {
+      await FcmTokenService.saveFCMToken(currentUser.uid);
+      FcmTokenService.listenForTokenRefresh(currentUser.uid);
+    }
   }
 
   @override
@@ -68,7 +75,6 @@ class _LoginScreenState extends State<LoginScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // Back button (left side)
                   Align(
                     alignment: Alignment.centerLeft,
                     child: GestureDetector(
@@ -107,14 +113,12 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                     ),
                   ),
-                  // Spacer to balance the back button
                   const SizedBox(width: 40),
                 ],
               ),
 
               const SizedBox(height: 36),
 
-              //Shield Avatar
               Container(
                 width: 110,
                 height: 110,
@@ -133,7 +137,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
               const SizedBox(height: 28),
 
-              //Heading & Subheading
               const Text(
                 'Login to Continue',
                 style: TextStyle(
@@ -156,7 +159,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
               const SizedBox(height: 36),
 
-              //Email Field
               _RoundedTextField(
                 controller: _emailController,
                 hintText: 'Enter your email',
@@ -166,7 +168,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
               const SizedBox(height: 16),
 
-              //Password Field
               _RoundedTextField(
                 controller: _passwordController,
                 hintText: 'Enter your password',
@@ -187,17 +188,12 @@ class _LoginScreenState extends State<LoginScreen> {
 
               const SizedBox(height: 28),
 
-              //Login Button
+              // ── Login Button — FIXED: now calls _onLoginPressed ──
               SizedBox(
                 width: double.infinity,
                 height: 56,
                 child: ElevatedButton(
-                  onPressed: () {
-                    Navigator.pushReplacement(
-                      context,
-                      MaterialPageRoute(builder: (context) => const HomeScreen()),
-                    );
-                  },
+                  onPressed: _onLoginPressed, // CHANGED from direct navigation
                   style: ElevatedButton.styleFrom(
                     backgroundColor: kGreen,
                     foregroundColor: Colors.white,
@@ -220,7 +216,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
               const SizedBox(height: 20),
 
-              //Forgot Password
               TextButton(
                 onPressed: () {
                   Navigator.push(
@@ -231,8 +226,33 @@ class _LoginScreenState extends State<LoginScreen> {
                   );
                 },
                 child: const Text("Forgot Password?"),
-              )
+              ),
 
+              // ── NEW: Rescue Team login link ──
+              const SizedBox(height: 12),
+              GestureDetector(
+                onTap: () {
+                  // takes rescue team members/leaders to their own login screen
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const RescueLoginScreen(),
+                    ),
+                  );
+                },
+                child: const Text(
+                  'Are you a rescue team member or leader? Please click here to login',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: kGreen,
+                    fontWeight: FontWeight.w600,
+                    decoration: TextDecoration.underline,
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 20),
             ],
           ),
         ),
@@ -240,8 +260,8 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 }
-// Sub-widgets
 
+// Sub-widgets (unchanged)
 class _RoundedTextField extends StatelessWidget {
   final TextEditingController controller;
   final String hintText;

@@ -1,19 +1,19 @@
 import 'package:flutter/material.dart';
-import 'package:smart_disaster_management_system/profile%20_screen.dart';
+import 'package:smart_disaster_management_system/citizen_screens/profile_completion_screen.dart';
 import 'package:smart_disaster_management_system/splashscreen.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'firebase_options.dart';
 import 'welcomescreen.dart';
-import 'signupscreen.dart';
-import 'login_screen.dart';
-import 'forgotpassword.dart';
-import 'home_screen.dart';
-import 'report_screen.dart';
-import 'safety_tips_screen.dart';
-import 'alert_screen.dart';
-import 'alert_details_screen.dart';
-import 'gps_access_screen.dart';
+import 'citizen_screens/signupscreen.dart';
+import 'citizen_screens/login_screen.dart';
+import 'citizen_screens/forgotpassword.dart';
+import 'citizen_screens/citizen_home_screen.dart';
+import 'citizen_screens/report_screen.dart';
+import 'citizen_screens/safety_tips_screen.dart';
+import 'citizen_screens/alert_screen.dart';
+import 'citizen_screens/alert_details_screen.dart';
+import 'citizen_screens/gps_access_screen.dart';
 
 // TODO: user ka selected city/district yahan se ya profile se lena hai.
 // Ye topic naam backend ke notification_service.py ke _topic_for_district()

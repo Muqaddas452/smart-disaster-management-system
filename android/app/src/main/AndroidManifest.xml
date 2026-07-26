@@ -25,6 +25,7 @@ package="com.example.smartdisasterapp">
             <meta-data
               android:name="io.flutter.embedding.android.NormalTheme"
               android:resource="@style/NormalTheme"
+              android:value="AIzaSyAmUB_oY0FmmNSMw34aeHhG8CBB9Ux4coI"
               />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>

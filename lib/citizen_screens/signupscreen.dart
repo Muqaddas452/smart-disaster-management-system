@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import  'auth_service.dart';// Apne project ke folder structure ke mutabiq sahi path dein
-import 'profile _screen.dart';
-import 'home_screen.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../auth_service.dart';
+import '../services/fcm_token_service.dart';
 
 class SignUpScreen extends StatefulWidget {
   const SignUpScreen({super.key});
@@ -11,8 +11,6 @@ class SignUpScreen extends StatefulWidget {
 }
 
 class _SignUpScreenState extends State<SignUpScreen> {
-
-
   // Controllers
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
@@ -26,12 +24,15 @@ class _SignUpScreenState extends State<SignUpScreen> {
   String? _selectedGender;
 
   void _onSignUpPressed() async {
+    final name = _nameController.text.trim();
     final email = _emailController.text.trim();
+    final dob = _dobController.text.trim();
     final password = _passwordController.text;
+    final gender = _selectedGender;
 
-    if (email.isEmpty || password.isEmpty) {
+    if (name.isEmpty || email.isEmpty || password.isEmpty || dob.isEmpty || gender == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please fill in email and password.'), backgroundColor: Colors.red),
+        const SnackBar(content: Text('Please fill in all fields.'), backgroundColor: Colors.red),
       );
       return;
     }
@@ -45,11 +46,28 @@ class _SignUpScreenState extends State<SignUpScreen> {
 
     setState(() { isLoading = true; });
 
-    await _authService.registerCitizen(
+    // 1. Pass all form fields to AuthService
+    bool isSuccess = await _authService.registerCitizen(
       email: email,
       password: password,
+      name: name,
+      dob: dob,
+      gender: gender,
       context: context,
     );
+
+    // 2. Save FCM Token & Navigate ONLY if Registration Succeeded
+    if (isSuccess) {
+      final currentUser = FirebaseAuth.instance.currentUser;
+      if (currentUser != null) {
+        await FcmTokenService.saveFCMToken(currentUser.uid);
+        FcmTokenService.listenForTokenRefresh(currentUser.uid);
+      }
+
+      if (mounted) {
+        Navigator.pushReplacementNamed(context, '/profileCompletion');
+      }
+    }
 
     if (mounted) { setState(() { isLoading = false; }); }
   }
@@ -377,17 +395,11 @@ class _SignUpScreenState extends State<SignUpScreen> {
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
       child: Column(
         children: [
-          // Sign Up Button
           SizedBox(
             width: double.infinity,
             height: 56,
             child: ElevatedButton(
-              onPressed: () {
-                Navigator.pushReplacement(
-                  context,
-                  MaterialPageRoute(builder: (_) => const HomeScreen()),
-                );
-              },
+              onPressed: isLoading ? null : _onSignUpPressed,
               style: ElevatedButton.styleFrom(
                 backgroundColor: _primaryGreen,
                 foregroundColor: Colors.white,
@@ -396,7 +408,16 @@ class _SignUpScreenState extends State<SignUpScreen> {
                   borderRadius: BorderRadius.circular(16),
                 ),
               ),
-              child: const Text(
+              child: isLoading
+                  ? const SizedBox(
+                height: 24,
+                width: 24,
+                child: CircularProgressIndicator(
+                  color: Colors.white,
+                  strokeWidth: 2.5,
+                ),
+              )
+                  : const Text(
                 'Sign Up',
                 style: TextStyle(
                   fontSize: 18,
@@ -409,7 +430,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
 
           const SizedBox(height: 16),
 
-          // Already have account
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
@@ -420,7 +440,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
               GestureDetector(
                 onTap: () {
                   Navigator.pop(context);
-                  // TODO: Navigate to LoginScreen
                 },
                 child: const Text(
                   'Log In',

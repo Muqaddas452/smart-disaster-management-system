@@ -1,4 +1,4 @@
-// lib/screens/reporte_screen.dart
+// lib/screens/report_screen.dart
 // Manual Emergency Reporting Screen — Online/Offline support with Auto Sync
 
 import 'package:flutter/material.dart';
@@ -8,19 +8,19 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:geolocator/geolocator.dart';
 import 'dart:async';
 
-import '../database/db_report_helper.dart';
-import '../services/report_sync_service.dart';
-import 'report_status_screen.dart';
-import 'offline_screen.dart';
+import '../../database/db_report_helper.dart';
+import '../../services/report_sync_service.dart';
+import '../../citizen_screens/report_status_screen.dart';
+import '../../citizen_screens/offline_screen.dart';
 
-class ReporteScreen extends StatefulWidget {
-  const ReporteScreen({super.key});
+class ReportScreen extends StatefulWidget {
+  const ReportScreen({super.key});
 
   @override
-  State<ReporteScreen> createState() => _ReporteScreenState();
+  State<ReportScreen> createState() => _ReportScreenState();
 }
 
-class _ReporteScreenState extends State<ReporteScreen> {
+class _ReportScreenState extends State<ReportScreen> {
   // ── Controllers
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _phoneController = TextEditingController();
@@ -41,12 +41,13 @@ class _ReporteScreenState extends State<ReporteScreen> {
   // ── Connectivity Listener
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
 
-  // ── Constants
-  static const _primaryGreen = Color(0xFF2E7D32);
+  // ── Constants (Dark Green Header matching App Notifications theme)
+  static const _appBarGreen = Color(0xFF1B5E20);
+  static const _primaryGreen = Color(0xFF1B5E20);
   static const _lightGreen = Color(0xFFE8F5E9);
   static const _hintGreen = Color(0xFF66BB6A);
   static const _borderGreen = Color(0xFFA5D6A7);
-  static const _bgColor = Color(0xFFF5F5F5);
+  static const _bgColor = Color(0xFFF7F7F7);
 
   static const List<String> _emergencyTypes = [
     'Natural Disasters',
@@ -164,7 +165,6 @@ class _ReporteScreenState extends State<ReporteScreen> {
           _autoDetectedLocation =
           'Location permanently denied. Enable from app settings.';
         });
-        // App settings kholo
         await Geolocator.openAppSettings();
       }
       return;
@@ -198,7 +198,6 @@ class _ReporteScreenState extends State<ReporteScreen> {
   // ════════════════════════════════════════
 
   Future<void> _handleSubmit() async {
-    // 1. Form validation
     if (!_formKey.currentState!.validate()) return;
 
     if (_selectedEmergencyType == null) {
@@ -208,13 +207,12 @@ class _ReporteScreenState extends State<ReporteScreen> {
 
     setState(() => _isSubmitting = true);
 
-    // 2. Report data map — Firebase field names match kiye (manual_reports collection)
     final reportData = {
       'name': _nameController.text.trim(),
       'phone': _phoneController.text.trim(),
-      'emergencyType': _selectedEmergencyType,   // local DB mein
+      'emergencyType': _selectedEmergencyType,
       'description': _descriptionController.text.trim(),
-      'severity': _severityLevel,                // local DB mein
+      'severity': _severityLevel,
       'location': _autoDetectedLocation,
       'latitude': _latitude,
       'longitude': _longitude,
@@ -222,25 +220,23 @@ class _ReporteScreenState extends State<ReporteScreen> {
     };
 
     try {
-      // 3. Internet check (connectivity_plus 6.x — list return karta hai)
       final connectivityResult = await Connectivity().checkConnectivity();
       final isOnline = connectivityResult.isNotEmpty &&
           !connectivityResult.contains(ConnectivityResult.none);
 
       if (isOnline) {
-        // ── ONLINE: Firestore ko directly bhejo
         final uid = FirebaseAuth.instance.currentUser?.uid ?? 'anonymous';
 
         await FirebaseFirestore.instance.collection('manual_reports').add({
           'name': reportData['name'],
           'phone': reportData['phone'],
-          'incident_type': reportData['emergencyType'],   // Firebase field
+          'incident_type': reportData['emergencyType'],
           'description': reportData['description'],
-          'severity_level': reportData['severity'],        // Firebase field
+          'severity_level': reportData['severity'],
           'location': reportData['location'],
           'latitude': reportData['latitude'],
           'longitude': reportData['longitude'],
-          'timestamp': FieldValue.serverTimestamp(),       // Firebase proper timestamp
+          'timestamp': FieldValue.serverTimestamp(),
           'localTimestamp': reportData['timestamp'],
           'reportedBy': uid,
           'status': 'Pending',
@@ -256,9 +252,8 @@ class _ReporteScreenState extends State<ReporteScreen> {
           );
         }
       } else {
-        // ── OFFLINE: SQLite mein save karo
         await DBReportHelper.insertReport(reportData);
-        await _loadUnsyncedCount(); // Count update karo
+        await _loadUnsyncedCount();
 
         _showSnackBar(
           '📴 No internet! Report saved locally. Will auto-sync when online.',
@@ -313,7 +308,6 @@ class _ReporteScreenState extends State<ReporteScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Pending sync banner — agar koi local reports hain
                 if (_unsyncedCount > 0) _buildSyncBanner(),
                 _buildSubtitle(),
                 const SizedBox(height: 24),
@@ -370,7 +364,6 @@ class _ReporteScreenState extends State<ReporteScreen> {
     );
   }
 
-  // ── Sync Banner — pending reports dikhane k liye
   Widget _buildSyncBanner() {
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
@@ -395,18 +388,19 @@ class _ReporteScreenState extends State<ReporteScreen> {
     );
   }
 
+  // Dark Green AppBar matching App Notifications header
   PreferredSizeWidget _buildAppBar(BuildContext context) {
     return AppBar(
-      backgroundColor: _bgColor,
+      backgroundColor: _appBarGreen,
       elevation: 0,
       leading: IconButton(
-        icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.black87),
+        icon: const Icon(Icons.arrow_back, color: Colors.white),
         onPressed: () => Navigator.pop(context),
       ),
       title: const Text(
         'Manual Emergency Reporting',
         style: TextStyle(
-          color: Colors.black87,
+          color: Colors.white,
           fontWeight: FontWeight.bold,
           fontSize: 18,
         ),
@@ -535,7 +529,6 @@ class _ReporteScreenState extends State<ReporteScreen> {
               style: const TextStyle(fontSize: 13, color: Colors.black87),
             ),
           ),
-          // Refresh button — location dobara fetch karo
           IconButton(
             icon: const Icon(Icons.refresh_rounded, color: _primaryGreen, size: 20),
             onPressed: () {
