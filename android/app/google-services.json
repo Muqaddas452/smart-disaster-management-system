@@ -1,13 +1,70 @@
 {
   "project_info": {
-    "project_number": "311185449978",
-    "project_id": "smart-disaster-managemen-90b61",
-    "storage_bucket": "smart-disaster-managemen-90b61.firebasestorage.app"
+    "project_number": "537675524238",
+    "project_id": "fir-setup-demo-first",
+    "storage_bucket": "fir-setup-demo-first.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:311185449978:android:b0575253aa0d16b79a3a43",
+        "mobilesdk_app_id": "1:537675524238:android:dd23249575ce26c84201df",
+        "android_client_info": {
+          "package_name": "com.example.adminpanel"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCG3sI8DEdenv63MMU6qOFQGmLJhmk20Zc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:537675524238:android:34cce07e88a2e5ba4201df",
+        "android_client_info": {
+          "package_name": "com.example.adminpanel_new"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCG3sI8DEdenv63MMU6qOFQGmLJhmk20Zc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:537675524238:android:32e87c32583643094201df",
+        "android_client_info": {
+          "package_name": "com.example.my_flutter_firebase_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCG3sI8DEdenv63MMU6qOFQGmLJhmk20Zc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:537675524238:android:2c1e85f24e7821ca4201df",
         "android_client_info": {
           "package_name": "com.example.smartdisasterapp"
         }
@@ -15,7 +72,7 @@
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyDUfTXqRu06g16XmvwkXA3SVy3_TJh5AzI"
+          "current_key": "AIzaSyCG3sI8DEdenv63MMU6qOFQGmLJhmk20Zc"
         }
       ],
       "services": {
