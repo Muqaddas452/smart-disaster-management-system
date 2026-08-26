@@ -25,6 +25,29 @@ class _ReportDetailsDialogState
   bool loading = false;
 
   // ============================================================
+  // DISPLAY STATUS
+  // ============================================================
+  // Firestore:
+  // "In Progress"
+  //
+  // UI:
+  // "Working"
+  // ============================================================
+
+  String _displayStatus(String status) {
+    if (status.trim().toLowerCase() == "in progress") {
+      return "Working";
+    }
+
+    // Also support old records that may contain "Assigned"
+    if (status.trim().toLowerCase() == "assigned") {
+      return "Working";
+    }
+
+    return status;
+  }
+
+  // ============================================================
   // UPDATE REPORT STATUS
   // ============================================================
 
@@ -41,11 +64,13 @@ class _ReportDetailsDialogState
 
       if (!mounted) return;
 
+      final displayStatus = _displayStatus(status);
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           backgroundColor: Colors.green,
           content: Text(
-            "Report status changed to $status",
+            "Report status changed to $displayStatus",
           ),
         ),
       );
@@ -187,7 +212,9 @@ class _ReportDetailsDialogState
         backgroundColor: color,
         foregroundColor: Colors.white,
       ),
-      onPressed: () {
+      onPressed: loading
+          ? null
+          : () {
         updateStatus(status);
       },
     );
@@ -200,6 +227,10 @@ class _ReportDetailsDialogState
   @override
   Widget build(BuildContext context) {
     final report = widget.report;
+
+    // Convert database status to user-friendly status.
+    final String displayStatus =
+    _displayStatus(report.status);
 
     return Dialog(
       child: ConstrainedBox(
@@ -221,6 +252,7 @@ class _ReportDetailsDialogState
               crossAxisAlignment:
               CrossAxisAlignment.start,
               children: [
+
                 // ==================================================
                 // TITLE
                 // ==================================================
@@ -344,7 +376,7 @@ class _ReportDetailsDialogState
                     const SizedBox(width: 10),
 
                     StatusChip(
-                      status: report.status,
+                      status: displayStatus,
                     ),
                   ],
                 ),
@@ -352,7 +384,7 @@ class _ReportDetailsDialogState
                 const SizedBox(height: 25),
 
                 // ==================================================
-                // STATUS BUTTONS
+                // CHANGE STATUS
                 // ==================================================
 
                 const Text(
@@ -369,9 +401,10 @@ class _ReportDetailsDialogState
                   spacing: 10,
                   runSpacing: 10,
                   children: [
-                    // --------------------------------------------
+
+                    // ============================================
                     // PENDING
-                    // --------------------------------------------
+                    // ============================================
 
                     statusButton(
                       label: "Pending",
@@ -380,22 +413,25 @@ class _ReportDetailsDialogState
                       color: Colors.orange,
                     ),
 
-                    // --------------------------------------------
+                    // ============================================
                     // WORKING
+                    //
                     // IMPORTANT:
-                    // Firestore will store "Working"
-                    // --------------------------------------------
+                    // UI = Working
+                    // FIRESTORE = In Progress
+                    // ============================================
 
                     statusButton(
+
                       label: "Working",
                       status: "Working",
                       icon: Icons.engineering,
                       color: Colors.blue,
                     ),
 
-                    // --------------------------------------------
+                    // ============================================
                     // RESOLVED
-                    // --------------------------------------------
+                    // ============================================
 
                     statusButton(
                       label: "Resolved",
@@ -404,9 +440,9 @@ class _ReportDetailsDialogState
                       color: Colors.green,
                     ),
 
-                    // --------------------------------------------
+                    // ============================================
                     // DELETE
-                    // --------------------------------------------
+                    // ============================================
 
                     ElevatedButton.icon(
                       icon: const Icon(
@@ -417,19 +453,28 @@ class _ReportDetailsDialogState
                       ),
                       style:
                       ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red,
-                        foregroundColor: Colors.white,
+                        backgroundColor:
+                        Colors.red,
+                        foregroundColor:
+                        Colors.white,
                       ),
-                      onPressed: deleteReport,
+                      onPressed:
+                      loading
+                          ? null
+                          : deleteReport,
                     ),
 
-                    // --------------------------------------------
+                    // ============================================
                     // CLOSE
-                    // --------------------------------------------
+                    // ============================================
 
                     OutlinedButton(
-                      onPressed: () {
-                        Navigator.pop(context);
+                      onPressed: loading
+                          ? null
+                          : () {
+                        Navigator.pop(
+                          context,
+                        );
                       },
                       child: const Text(
                         "Close",
