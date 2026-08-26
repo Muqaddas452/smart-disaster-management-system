@@ -1,0 +1,6 @@
+temperature,humidity,rainfall,wind_speed,pressure
+29,55,0,10,1015
+30,60,1,12,1013
+28,50,0,8,1016
+31,58,0,11,1014
+27,52,2,9,1015
