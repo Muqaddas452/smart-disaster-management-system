@@ -30,20 +30,27 @@ class TopBar extends StatefulWidget implements PreferredSizeWidget {
 }
 
 class _TopBarState extends State<TopBar> {
+  // ============================================================
+  // SEARCH
+  // ============================================================
+
   final TextEditingController _searchController =
   TextEditingController();
 
   final FocusNode _searchFocusNode = FocusNode();
 
+  final LayerLink _searchLayerLink = LayerLink();
+
+  OverlayEntry? _searchOverlay;
+
   Timer? _searchDebounce;
 
-  bool _showSearchResults = false;
   bool _searching = false;
 
   List<_SearchResult> _searchResults = [];
 
   // ============================================================
-  // SEARCH
+  // SEARCH TEXT CHANGE
   // ============================================================
 
   void _onSearchChanged(String value) {
@@ -52,18 +59,21 @@ class _TopBarState extends State<TopBar> {
     final query = value.trim();
 
     if (query.isEmpty) {
+      _removeSearchOverlay();
+
       setState(() {
         _searchResults = [];
-        _showSearchResults = false;
         _searching = false;
       });
+
       return;
     }
 
     setState(() {
-      _showSearchResults = true;
       _searching = true;
     });
+
+    _showSearchOverlay();
 
     _searchDebounce = Timer(
       const Duration(milliseconds: 400),
@@ -72,6 +82,10 @@ class _TopBarState extends State<TopBar> {
       },
     );
   }
+
+  // ============================================================
+  // PERFORM SEARCH
+  // ============================================================
 
   Future<void> _performSearch(String query) async {
     final lowerQuery = query.toLowerCase();
@@ -83,19 +97,28 @@ class _TopBarState extends State<TopBar> {
 
       // ========================================================
       // REPORTS
+      // IMPORTANT:
+      // Your project uses manual_reports
       // ========================================================
 
-      final reportsSnapshot =
-      await firestore.collection('reports').limit(50).get();
+      final reportsSnapshot = await firestore
+          .collection('manual_reports')
+          .limit(50)
+          .get();
 
       for (final doc in reportsSnapshot.docs) {
         final data = doc.data();
 
         final reporterName =
-        (data['reporterName'] ?? '').toString();
+        (data['reporterName'] ??
+            data['reportedBy'] ??
+            '')
+            .toString();
 
         final emergencyType =
-        (data['emergencyType'] ?? data['incident_type'] ?? '')
+        (data['emergencyType'] ??
+            data['incident_type'] ??
+            '')
             .toString();
 
         final description =
@@ -130,8 +153,10 @@ class _TopBarState extends State<TopBar> {
       // RESCUE TEAMS
       // ========================================================
 
-      final teamsSnapshot =
-      await firestore.collection('rescueTeams').limit(50).get();
+      final teamsSnapshot = await firestore
+          .collection('rescueTeams')
+          .limit(50)
+          .get();
 
       for (final doc in teamsSnapshot.docs) {
         final data = doc.data();
@@ -177,8 +202,10 @@ class _TopBarState extends State<TopBar> {
       // CITIZENS
       // ========================================================
 
-      final citizensSnapshot =
-      await firestore.collection('citizens').limit(50).get();
+      final citizensSnapshot = await firestore
+          .collection('citizens')
+          .limit(50)
+          .get();
 
       for (final doc in citizensSnapshot.docs) {
         final data = doc.data();
@@ -223,6 +250,8 @@ class _TopBarState extends State<TopBar> {
         _searchResults = results.take(15).toList();
         _searching = false;
       });
+
+      _showSearchOverlay();
     } catch (e) {
       if (!mounted) return;
 
@@ -230,6 +259,8 @@ class _TopBarState extends State<TopBar> {
         _searchResults = [];
         _searching = false;
       });
+
+      _showSearchOverlay();
 
       _showSnackBar(
         "Search failed. Please try again.",
@@ -248,16 +279,76 @@ class _TopBarState extends State<TopBar> {
   }
 
   // ============================================================
-  // SEARCH RESULT CLICK
+  // SEARCH OVERLAY
   // ============================================================
 
-  void _onSearchResultTap(_SearchResult result) {
+  void _showSearchOverlay() {
+    _removeSearchOverlay();
+
+    if (_searchController.text.trim().isEmpty) {
+      return;
+    }
+
+    final overlay = Overlay.of(context);
+
+    _searchOverlay = OverlayEntry(
+      builder: (context) {
+        return Positioned(
+          width: 300,
+          child: CompositedTransformFollower(
+            link: _searchLayerLink,
+            showWhenUnlinked: false,
+
+            // Search box is 220 wide.
+            // Dropdown starts at search box.
+            offset: const Offset(0, 48),
+
+            child: Material(
+              elevation: 12,
+              borderRadius: BorderRadius.circular(10),
+              color: Colors.white,
+              child: Container(
+                constraints: const BoxConstraints(
+                  maxHeight: 350,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: Colors.grey.shade200,
+                  ),
+                ),
+                child: _buildSearchResults(),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
+    overlay.insert(_searchOverlay!);
+  }
+
+  void _removeSearchOverlay() {
+    _searchOverlay?.remove();
+    _searchOverlay = null;
+  }
+
+  // ============================================================
+  // SEARCH RESULT TAP
+  // ============================================================
+
+  void _onSearchResultTap(
+      _SearchResult result,
+      ) {
+    _removeSearchOverlay();
+
     _searchController.clear();
     _searchFocusNode.unfocus();
 
     setState(() {
-      _showSearchResults = false;
       _searchResults = [];
+      _searching = false;
     });
 
     showDialog(
@@ -324,10 +415,12 @@ class _TopBarState extends State<TopBar> {
   }
 
   // ============================================================
-  // NOTIFICATION CLICK
+  // NOTIFICATION DETAILS
   // ============================================================
 
-  void _showAlertDetails(AlertModel alert) {
+  void _showAlertDetails(
+      AlertModel alert,
+      ) {
     showDialog(
       context: context,
       builder: (_) {
@@ -342,9 +435,7 @@ class _TopBarState extends State<TopBar> {
               ),
               const SizedBox(width: 10),
               Expanded(
-                child: Text(
-                  alert.disaster,
-                ),
+                child: Text(alert.disaster),
               ),
             ],
           ),
@@ -519,9 +610,66 @@ class _TopBarState extends State<TopBar> {
           // ======================================================
 
           if (showSearch)
-            SizedBox(
-              width: 220,
-              child: _buildSearchField(),
+            CompositedTransformTarget(
+              link: _searchLayerLink,
+              child: SizedBox(
+                width: 220,
+                child: TextField(
+                  controller: _searchController,
+                  focusNode: _searchFocusNode,
+                  onChanged: _onSearchChanged,
+
+                  onTap: () {
+                    if (_searchController.text
+                        .trim()
+                        .isNotEmpty) {
+                      _showSearchOverlay();
+                    }
+                  },
+
+                  decoration: InputDecoration(
+                    hintText:
+                    'Search reports, teams…',
+
+                    prefixIcon: const Icon(
+                      Icons.search_rounded,
+                      size: 18,
+                    ),
+
+                    suffixIcon:
+                    _searchController.text
+                        .isNotEmpty
+                        ? IconButton(
+                      icon: const Icon(
+                        Icons.clear,
+                        size: 18,
+                      ),
+                      onPressed: () {
+                        _searchController
+                            .clear();
+
+                        _removeSearchOverlay();
+
+                        setState(() {
+                          _searchResults =
+                          [];
+                          _searching =
+                          false;
+                        });
+                      },
+                    )
+                        : null,
+
+                    contentPadding:
+                    const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+
+                    isDense: true,
+                  ),
+                ),
+              ),
             ),
 
           if (showSearch)
@@ -541,7 +689,7 @@ class _TopBarState extends State<TopBar> {
                 color: AppColors.danger,
               ),
               label: const Text(
-                'Broadcast Alert',
+                "Broadcast Alert",
                 style: TextStyle(
                   color: AppColors.danger,
                   fontSize: 12,
@@ -567,24 +715,25 @@ class _TopBarState extends State<TopBar> {
           // ======================================================
 
           StreamBuilder<List<AlertModel>>(
-            stream:
-            AlertService().getAlerts(),
-            builder:
-                (context, snapshot) {
+            stream: AlertService().getAlerts(),
+
+            builder: (context, snapshot) {
               final alerts =
                   snapshot.data ?? [];
 
-              // Show latest 5 notifications.
               final latestAlerts =
               alerts.take(5).toList();
 
               return PopupMenuButton<int>(
                 tooltip: "Notifications",
+
                 position:
                 PopupMenuPosition.under,
+
                 icon: _notificationIcon(
                   latestAlerts.length,
                 ),
+
                 itemBuilder: (_) {
                   if (latestAlerts.isEmpty) {
                     return [
@@ -592,9 +741,8 @@ class _TopBarState extends State<TopBar> {
                         enabled: false,
                         child: SizedBox(
                           width: 220,
-                          child: Text(
-                            "No Alerts",
-                          ),
+                          child:
+                          Text("No Alerts"),
                         ),
                       ),
                     ];
@@ -621,7 +769,8 @@ class _TopBarState extends State<TopBar> {
 
                         return PopupMenuItem<int>(
                           value: index,
-                          child: _notificationItem(
+                          child:
+                          _notificationItem(
                             alert,
                           ),
                         );
@@ -647,16 +796,16 @@ class _TopBarState extends State<TopBar> {
                     ),
                   ];
                 },
+
                 onSelected: (value) {
                   if (value == -1) {
-                    _showAllAlerts(
-                      alerts,
-                    );
+                    _showAllAlerts(alerts);
                     return;
                   }
 
                   if (value >= 0 &&
-                      value < latestAlerts.length) {
+                      value <
+                          latestAlerts.length) {
                     _showAlertDetails(
                       latestAlerts[value],
                     );
@@ -671,158 +820,75 @@ class _TopBarState extends State<TopBar> {
   }
 
   // ============================================================
-  // SEARCH FIELD
-  // ============================================================
-
-  Widget _buildSearchField() {
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        TextField(
-          controller: _searchController,
-          focusNode: _searchFocusNode,
-          onChanged: _onSearchChanged,
-          onTap: () {
-            if (_searchController
-                .text
-                .trim()
-                .isNotEmpty) {
-              setState(() {
-                _showSearchResults = true;
-              });
-            }
-          },
-          decoration: InputDecoration(
-            hintText:
-            'Search reports, teams…',
-            prefixIcon: const Icon(
-              Icons.search_rounded,
-              size: 18,
-            ),
-            suffixIcon: _searchController
-                .text
-                .isNotEmpty
-                ? IconButton(
-              icon: const Icon(
-                Icons.clear,
-                size: 18,
-              ),
-              onPressed: () {
-                _searchController.clear();
-
-                setState(() {
-                  _searchResults = [];
-                  _showSearchResults =
-                  false;
-                  _searching = false;
-                });
-              },
-            )
-                : null,
-            contentPadding:
-            const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 8,
-            ),
-            isDense: true,
-          ),
-        ),
-
-        if (_showSearchResults)
-          Positioned(
-            top: 48,
-            left: 0,
-            right: 0,
-            child: _buildSearchResults(),
-          ),
-      ],
-    );
-  }
-
-  // ============================================================
-  // SEARCH RESULTS
+  // SEARCH RESULTS WIDGET
   // ============================================================
 
   Widget _buildSearchResults() {
-    return Material(
-      elevation: 8,
-      borderRadius:
-      BorderRadius.circular(10),
-      child: Container(
-        constraints:
-        const BoxConstraints(
-          maxHeight: 350,
-        ),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius:
-          BorderRadius.circular(10),
-        ),
-        child: _searching
-            ? const Padding(
-          padding: EdgeInsets.all(20),
-          child: Center(
-            child:
-            CircularProgressIndicator(),
-          ),
-        )
-            : _searchResults.isEmpty
-            ? const Padding(
-          padding:
-          EdgeInsets.all(20),
-          child: Text(
-            "No matching records found.",
-          ),
-        )
-            : ListView.builder(
-          shrinkWrap: true,
-          itemCount:
-          _searchResults.length,
-          itemBuilder:
-              (context, index) {
-            final result =
-            _searchResults[index];
+    return _searching
+        ? const Padding(
+      padding: EdgeInsets.all(20),
+      child: Center(
+        child:
+        CircularProgressIndicator(),
+      ),
+    )
+        : _searchResults.isEmpty
+        ? const Padding(
+      padding: EdgeInsets.all(20),
+      child: Text(
+        "No matching records found.",
+      ),
+    )
+        : ListView.builder(
+      padding:
+      const EdgeInsets.symmetric(
+        vertical: 6,
+      ),
+      shrinkWrap: true,
+      itemCount:
+      _searchResults.length,
+      itemBuilder:
+          (context, index) {
+        final result =
+        _searchResults[index];
 
-            return ListTile(
-              dense: true,
-              leading: CircleAvatar(
-                radius: 18,
-                backgroundColor:
-                result.color
-                    .withOpacity(
-                  .12,
-                ),
-                child: Icon(
-                  result.icon,
-                  color:
-                  result.color,
-                  size: 18,
-                ),
-              ),
-              title: Text(
-                result.title,
-                maxLines: 1,
-                overflow:
-                TextOverflow
-                    .ellipsis,
-              ),
-              subtitle: Text(
-                "${_typeLabel(result.type)} • "
-                    "${result.subtitle}",
-                maxLines: 1,
-                overflow:
-                TextOverflow
-                    .ellipsis,
-              ),
-              onTap: () {
-                _onSearchResultTap(
-                  result,
-                );
-              },
+        return ListTile(
+          dense: true,
+
+          leading: CircleAvatar(
+            radius: 18,
+            backgroundColor:
+            result.color
+                .withOpacity(.12),
+            child: Icon(
+              result.icon,
+              color: result.color,
+              size: 18,
+            ),
+          ),
+
+          title: Text(
+            result.title,
+            maxLines: 1,
+            overflow:
+            TextOverflow.ellipsis,
+          ),
+
+          subtitle: Text(
+            "${_typeLabel(result.type)} • "
+                "${result.subtitle}",
+            maxLines: 1,
+            overflow:
+            TextOverflow.ellipsis,
+          ),
+
+          onTap: () {
+            _onSearchResultTap(
+              result,
             );
           },
-        ),
-      ),
+        );
+      },
     );
   }
 
@@ -888,7 +954,8 @@ class _TopBarState extends State<TopBar> {
                       : count.toString(),
                   textAlign:
                   TextAlign.center,
-                  style: const TextStyle(
+                  style:
+                  const TextStyle(
                     color: Colors.white,
                     fontSize: 8,
                     fontWeight:
@@ -937,7 +1004,8 @@ class _TopBarState extends State<TopBar> {
                   maxLines: 1,
                   overflow:
                   TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style:
+                  const TextStyle(
                     fontWeight:
                     FontWeight.bold,
                   ),
@@ -950,7 +1018,8 @@ class _TopBarState extends State<TopBar> {
                   maxLines: 1,
                   overflow:
                   TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style:
+                  const TextStyle(
                     fontSize: 11,
                   ),
                 ),
@@ -962,7 +1031,8 @@ class _TopBarState extends State<TopBar> {
                   maxLines: 2,
                   overflow:
                   TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style:
+                  const TextStyle(
                     fontSize: 11,
                   ),
                 ),
@@ -975,7 +1045,7 @@ class _TopBarState extends State<TopBar> {
   }
 
   // ============================================================
-  // VIEW ALL ALERTS
+  // ALL ALERTS
   // ============================================================
 
   void _showAllAlerts(
@@ -998,7 +1068,8 @@ class _TopBarState extends State<TopBar> {
               ),
             )
                 : ListView.separated(
-              itemCount: alerts.length,
+              itemCount:
+              alerts.length,
               separatorBuilder:
                   (_, __) =>
               const Divider(),
@@ -1046,7 +1117,8 @@ class _TopBarState extends State<TopBar> {
               onPressed: () {
                 Navigator.pop(context);
               },
-              child: const Text("Close"),
+              child:
+              const Text("Close"),
             ),
           ],
         );
@@ -1104,18 +1176,26 @@ class _TopBarState extends State<TopBar> {
     }
   }
 
+  // ============================================================
+  // DISPOSE
+  // ============================================================
+
   @override
   void dispose() {
     _searchDebounce?.cancel();
+
+    _removeSearchOverlay();
+
     _searchController.dispose();
     _searchFocusNode.dispose();
+
     super.dispose();
   }
 }
 
-// ==================================================================
+// ================================================================
 // SEARCH RESULT MODEL
-// ==================================================================
+// ================================================================
 
 enum _SearchResultType {
   report,
@@ -1139,4 +1219,4 @@ class _SearchResult {
     required this.icon,
     required this.color,
   });
-  }
+}

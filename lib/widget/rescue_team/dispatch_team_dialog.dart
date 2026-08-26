@@ -21,9 +21,7 @@ class DispatchTeamDialog extends StatefulWidget {
 
 class _DispatchTeamDialogState
     extends State<DispatchTeamDialog> {
-
-  final ReportService _reportService =
-  ReportService();
+  final ReportService _reportService = ReportService();
 
   final RescueTeamService _teamService =
   RescueTeamService();
@@ -34,79 +32,90 @@ class _DispatchTeamDialogState
 
   @override
   Widget build(BuildContext context) {
-
     return AlertDialog(
-
       title: const Text(
         "Dispatch Rescue Team",
       ),
 
       content: SizedBox(
         width: 450,
-
         child: loading
-            ? const Center(
-          child:
-          CircularProgressIndicator(),
+            ? const SizedBox(
+          height: 100,
+          child: Center(
+            child: CircularProgressIndicator(),
+          ),
         )
             : StreamBuilder<List<Report>>(
-
-          stream:
-          _reportService.getReports(),
-
-          builder:
-              (context, snapshot) {
-
-            if (!snapshot.hasData) {
-              return const Center(
-                child:
-                CircularProgressIndicator(),
+          stream: _reportService.getReports(),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState ==
+                ConnectionState.waiting) {
+              return const SizedBox(
+                height: 100,
+                child: Center(
+                  child:
+                  CircularProgressIndicator(),
+                ),
               );
             }
 
-            final reports = snapshot.data!
-                .where(
-                  (r) =>
-              r.status !=
-                  "Resolved",
-            )
-                .toList();
+            if (snapshot.hasError) {
+              return Text(
+                "Error loading reports: "
+                    "${snapshot.error}",
+              );
+            }
 
-            if (reports.isEmpty) {
-              return const Text(
-                "No pending reports available.",
+            final reports =
+                snapshot.data ?? [];
+
+            // Show reports that are not resolved.
+            final availableReports =
+            reports.where((report) {
+              return report.status
+                  .toLowerCase() !=
+                  "resolved";
+            }).toList();
+
+            if (availableReports.isEmpty) {
+              return const Padding(
+                padding:
+                EdgeInsets.all(20),
+                child: Text(
+                  "No pending reports available.",
+                ),
               );
             }
 
             return DropdownButtonFormField<
                 Report>(
-
               value: selectedReport,
-
+              isExpanded: true,
               decoration:
               const InputDecoration(
-                labelText:
-                "Select Report",
+                labelText: "Select Report",
                 border:
                 OutlineInputBorder(),
               ),
-
-              items: reports
+              items: availableReports
                   .map(
                     (report) =>
-                    DropdownMenuItem(
+                    DropdownMenuItem<
+                        Report>(
                       value: report,
                       child: Text(
-                        "${report.emergencyType} - ${report.reporterName}",
+                        "${report.emergencyType} - "
+                            "${report.reporterName}",
+                        overflow:
+                        TextOverflow.ellipsis,
                       ),
                     ),
               )
                   .toList(),
-
               onChanged: (value) {
                 setState(() {
-                  selectedReport =
-                      value;
+                  selectedReport = value;
                 });
               },
             );
@@ -115,75 +124,102 @@ class _DispatchTeamDialogState
       ),
 
       actions: [
-
         OutlinedButton(
-
-          onPressed: () {
+          onPressed: loading
+              ? null
+              : () {
             Navigator.pop(context);
           },
-
           child: const Text("Cancel"),
         ),
 
         ElevatedButton.icon(
-
           icon: const Icon(Icons.send),
-
           label: const Text("Dispatch"),
-
-          onPressed: () async {
-
-            if (selectedReport == null) {
-              ScaffoldMessenger.of(context)
-                  .showSnackBar(
-                const SnackBar(
-                  content: Text(
-                    "Please select a report.",
-                  ),
-                ),
-              );
-              return;
-            }
-
-            setState(() {
-              loading = true;
-            });
-
-            await _teamService.dispatchTeam(
-
-              teamId: widget.team.id,
-
-              reportId: selectedReport!.id,
-
-              area:
-              "Lat: ${selectedReport!.latitude}, Lng: ${selectedReport!.longitude}",
-
-            );
-
-            /// only updates report status
-            /// does NOT change report UI
-
-            await _reportService.assignReport(
-              selectedReport!.id,
-            );
-
-            if (!mounted) return;
-
-            Navigator.pop(context);
-
-            ScaffoldMessenger.of(context)
-                .showSnackBar(
-              const SnackBar(
-                backgroundColor:
-                Colors.green,
-                content: Text(
-                  "Rescue Team Dispatched Successfully",
-                ),
-              ),
-            );
-          },
+          onPressed: loading
+              ? null
+              : _dispatchTeam,
         ),
       ],
     );
+  }
+
+  // ============================================================
+  // DISPATCH TEAM
+  // ============================================================
+
+  Future<void> _dispatchTeam() async {
+    if (selectedReport == null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.orange,
+          content: Text(
+            "Please select a report.",
+          ),
+        ),
+      );
+
+      return;
+    }
+
+    setState(() {
+      loading = true;
+    });
+
+    try {
+      final report = selectedReport!;
+
+      // --------------------------------------------------------
+      // 1. Dispatch rescue team
+      // --------------------------------------------------------
+
+      await _teamService.dispatchTeam(
+        teamId: widget.team.id,
+        reportId: report.id,
+        area:
+        "Lat: ${report.latitude}, "
+            "Lng: ${report.longitude}",
+      );
+
+      // --------------------------------------------------------
+      // 2. Change REPORT status to Working
+      // --------------------------------------------------------
+
+      await _reportService.assignReport(
+        report.id,
+      );
+
+      if (!mounted) return;
+
+      Navigator.pop(context);
+
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.green,
+          content: Text(
+            "Rescue Team Dispatched Successfully\n"
+                "Report status changed to Working.",
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        loading = false;
+      });
+
+      ScaffoldMessenger.of(context)
+          .showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.red,
+          content: Text(
+            "Dispatch failed: $e",
+          ),
+        ),
+      );
+    }
   }
 }
