@@ -65,6 +65,20 @@ exports.archiveOpenWeatherData = onDocumentWritten(
 ==========================================================
 PART 2 + PART 3 + PART 4
 Automatic affected zone + automatic FCM alert
+
+IMPORTANT:
+A new notification is sent ONLY when a disaster becomes
+ACTIVE for a city.
+
+If the same disaster continues:
+- No duplicate broadcast alert
+- No duplicate FCM notification
+
+If the disaster becomes NORMAL:
+- Existing active zone becomes INACTIVE
+
+If another disaster happens later:
+- A new alert can be generated
 ==========================================================
 */
 
@@ -108,9 +122,113 @@ exports.createAffectedZone = onDocumentWritten(
 
       /*
       ----------------------------------------------------
-      2. Validate location
+      2. Check whether this is a normal/no-disaster result
       ----------------------------------------------------
       */
+
+      const normalValues = [
+        "",
+        "normal",
+        "none",
+        "no disaster",
+        "no_disaster",
+        "no disaster detected",
+      ];
+
+      const isNormal =
+        normalValues.includes(disaster.toLowerCase());
+
+      /*
+      ----------------------------------------------------
+      3. NORMAL / NO DISASTER
+      ----------------------------------------------------
+
+      If there is no disaster, close active zones for
+      this city.
+
+      This allows a future disaster to generate a NEW alert.
+      ----------------------------------------------------
+      */
+
+      if (isNormal) {
+        console.log(
+          `No disaster detected for ${district}.`
+        );
+
+        if (district) {
+          const activeZonesSnapshot = await db
+            .collection("affected_zones")
+            .where("city", "==", district)
+            .where("status", "==", "Active")
+            .get();
+
+          if (!activeZonesSnapshot.empty) {
+            const batch = db.batch();
+
+            for (const zoneDoc of activeZonesSnapshot.docs) {
+              batch.update(zoneDoc.ref, {
+                status: "Inactive",
+              });
+            }
+
+            await batch.commit();
+
+            console.log(
+              `Closed ${activeZonesSnapshot.size} active zone(s) for ${district}.`
+            );
+          }
+
+          /*
+          --------------------------------------------------
+          Mark all active disaster states for this city
+          as inactive.
+          --------------------------------------------------
+          */
+
+          const stateSnapshot = await db
+            .collection("disaster_states")
+            .where("city", "==", district)
+            .where("status", "==", "Active")
+            .get();
+
+          if (!stateSnapshot.empty) {
+            const batch = db.batch();
+
+            for (const stateDoc of stateSnapshot.docs) {
+              batch.update(stateDoc.ref, {
+                status: "Inactive",
+                endedAt: FieldValue.serverTimestamp(),
+              });
+            }
+
+            await batch.commit();
+
+            console.log(
+              `Closed ${stateSnapshot.size} active disaster state(s).`
+            );
+          }
+        }
+
+        console.log(
+          "Normal result processed. No notification sent."
+        );
+
+        return null;
+      }
+
+      /*
+      ----------------------------------------------------
+      4. Validate disaster information
+      ----------------------------------------------------
+      */
+
+      if (!district) {
+        console.log(
+          "District/city is missing. Disaster alert ignored."
+        );
+
+        return null;
+      }
 
       if (
         !Number.isFinite(latitude) ||
@@ -125,30 +243,7 @@ exports.createAffectedZone = onDocumentWritten(
 
       /*
       ----------------------------------------------------
-      3. Ignore normal alerts
-      ----------------------------------------------------
-      */
-
-      const normalValues = [
-        "",
-        "normal",
-        "none",
-        "no disaster",
-        "no_disaster",
-        "no disaster detected",
-      ];
-
-      if (normalValues.includes(disaster.toLowerCase())) {
-        console.log(
-          `Normal alert detected for ${district}. No notification sent.`
-        );
-
-        return null;
-      }
-
-      /*
-      ----------------------------------------------------
-      4. Calculate affected radius
+      5. Calculate affected radius
       ----------------------------------------------------
       */
 
@@ -178,20 +273,111 @@ exports.createAffectedZone = onDocumentWritten(
 
       /*
       ====================================================
+      DUPLICATE PROTECTION
+      ====================================================
+
+      One state document represents:
+
+      City + Disaster Type
+
+      Example:
+
+      mandi_bahauddin_flood
+
+      If the state is already ACTIVE:
+      - Do not create another broadcast alert
+      - Do not send another FCM
+
+      This also protects against two Cloud Function
+      executions happening at almost the same time.
+      ====================================================
+      */
+
+      const stateId =
+        `${district}_${disaster}`
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "_")
+          .replace(/^_+|_+$/g, "");
+
+      const stateRef = db
+        .collection("disaster_states")
+        .doc(stateId);
+
+      let isNewDisaster = false;
+
+      /*
+      ----------------------------------------------------
+      Atomically check/create disaster state
+      ----------------------------------------------------
+      */
+
+      await db.runTransaction(async (transaction) => {
+        const stateDoc = await transaction.get(stateRef);
+
+        if (
+          stateDoc.exists &&
+          stateDoc.data()?.status === "Active"
+        ) {
+          /*
+          Same disaster is already active.
+          Therefore no new notification.
+          */
+
+          isNewDisaster = false;
+
+          transaction.update(stateRef, {
+            lastSeenAt: FieldValue.serverTimestamp(),
+            lastRisk: risk,
+            lastLatitude: latitude,
+            lastLongitude: longitude,
+          });
+
+          return;
+        }
+
+        /*
+        --------------------------------------------------
+        This is a NEW disaster event.
+        --------------------------------------------------
+        */
+
+        isNewDisaster = true;
+
+        transaction.set(
+          stateRef,
+          {
+            city: district,
+            disaster: disaster,
+            status: "Active",
+            startedAt: FieldValue.serverTimestamp(),
+            lastSeenAt: FieldValue.serverTimestamp(),
+            lastRisk: risk,
+            lastLatitude: latitude,
+            lastLongitude: longitude,
+            alertId: event.params.alertId,
+          },
+          {
+            merge: true,
+          }
+        );
+      });
+
+
+      /*
+      ====================================================
       PART 2
       Create/update affected zone
       ====================================================
       */
 
-      const affectedZonesRef = db.collection("affected_zones");
+      const affectedZonesRef =
+        db.collection("affected_zones");
 
-      const zoneName = district
-        ? `${district} Zone`
-        : "Affected Zone";
+      const zoneName = `${district} Zone`;
 
-      const description = district
-        ? `${disaster} reported in ${district}`
-        : `${disaster} reported`;
+      const description =
+        `${disaster} reported in ${district}`;
+
 
       /*
       ----------------------------------------------------
@@ -206,8 +392,20 @@ exports.createAffectedZone = onDocumentWritten(
         .limit(1)
         .get();
 
+
       if (!existingSnapshot.empty) {
-        const existingDoc = existingSnapshot.docs[0];
+        /*
+        --------------------------------------------------
+        Existing zone found.
+        Update its information.
+
+        IMPORTANT:
+        We do NOT create another zone.
+        --------------------------------------------------
+        */
+
+        const existingDoc =
+          existingSnapshot.docs[0];
 
         await existingDoc.ref.update({
           city: district,
@@ -223,6 +421,14 @@ exports.createAffectedZone = onDocumentWritten(
           `Affected zone already exists: ${existingDoc.id}`
         );
       } else {
+        /*
+        --------------------------------------------------
+        Create new affected zone.
+
+        ONLY these 11 fields are stored.
+        --------------------------------------------------
+        */
+
         const newZone = {
           assignedTeam: "Unassigned",
           city: district,
@@ -237,7 +443,8 @@ exports.createAffectedZone = onDocumentWritten(
           zoneName: zoneName,
         };
 
-        const newZoneRef = await affectedZonesRef.add(newZone);
+        const newZoneRef =
+          await affectedZonesRef.add(newZone);
 
         console.log(
           `Affected zone created: ${newZoneRef.id}`
@@ -247,12 +454,43 @@ exports.createAffectedZone = onDocumentWritten(
 
       /*
       ====================================================
-      PART 3
-      Automatically create broadcast alert
+      IMPORTANT DUPLICATE CHECK
+      ====================================================
+
+      If this disaster was already active, STOP here.
+
+      We already updated the affected zone above, but
+      we DO NOT create another broadcast alert and
+      DO NOT send another FCM.
       ====================================================
       */
 
-      const title = `🚨 ${risk} ${disaster} Alert`;
+      if (!isNewDisaster) {
+        console.log(
+          "Existing active disaster detected."
+        );
+
+        console.log(
+          "No duplicate broadcast alert created."
+        );
+
+        console.log(
+          "No duplicate FCM notification sent."
+        );
+
+        return null;
+      }
+
+
+      /*
+      ====================================================
+      PART 3
+      Automatically create ONE broadcast alert
+      ====================================================
+      */
+
+      const title =
+        `🚨 ${risk} ${disaster} Alert`;
 
       let body;
 
@@ -265,6 +503,7 @@ exports.createAffectedZone = onDocumentWritten(
           `${risk} ${disaster} has been detected. ` +
           `Please move to a safe location and follow emergency instructions.`;
       }
+
 
       /*
       ----------------------------------------------------
@@ -287,7 +526,7 @@ exports.createAffectedZone = onDocumentWritten(
         });
 
       console.log(
-        `Broadcast alert created: ${broadcastAlertRef.id}`
+        `NEW broadcast alert created: ${broadcastAlertRef.id}`
       );
 
 
@@ -305,6 +544,7 @@ exports.createAffectedZone = onDocumentWritten(
       let skipped = 0;
       let failed = 0;
 
+
       /*
       ----------------------------------------------------
       Distance calculation
@@ -320,8 +560,11 @@ exports.createAffectedZone = onDocumentWritten(
       ) {
         const earthRadius = 6371000;
 
-        const lat1Rad = (lat1 * Math.PI) / 180;
-        const lat2Rad = (lat2 * Math.PI) / 180;
+        const lat1Rad =
+          (lat1 * Math.PI) / 180;
+
+        const lat2Rad =
+          (lat2 * Math.PI) / 180;
 
         const deltaLat =
           ((lat2 - lat1) * Math.PI) / 180;
@@ -357,8 +600,11 @@ exports.createAffectedZone = onDocumentWritten(
       for (const citizenDoc of citizensSnapshot.docs) {
         const citizen = citizenDoc.data();
 
+
         /*
+        --------------------------------------------------
         Missing information
+        --------------------------------------------------
         */
 
         if (
@@ -370,11 +616,13 @@ exports.createAffectedZone = onDocumentWritten(
           continue;
         }
 
+
         const citizenLatitude =
           Number(citizen.latitude);
 
         const citizenLongitude =
           Number(citizen.longitude);
+
 
         if (
           !Number.isFinite(citizenLatitude) ||
@@ -391,12 +639,14 @@ exports.createAffectedZone = onDocumentWritten(
         --------------------------------------------------
         */
 
-        const distance = distanceInMeters(
-          latitude,
-          longitude,
-          citizenLatitude,
-          citizenLongitude
-        );
+        const distance =
+          distanceInMeters(
+            latitude,
+            longitude,
+            citizenLatitude,
+            citizenLongitude
+          );
+
 
         console.log(
           `Citizen ${citizenDoc.id}: ${Math.round(distance)} meters away`
@@ -405,7 +655,7 @@ exports.createAffectedZone = onDocumentWritten(
 
         /*
         --------------------------------------------------
-        Send only if inside affected radius
+        Send ONLY if inside affected radius
         --------------------------------------------------
         */
 
@@ -427,6 +677,7 @@ exports.createAffectedZone = onDocumentWritten(
 
               token: citizen.fcmToken,
             };
+
 
             await messaging.send(message);
 
@@ -450,21 +701,28 @@ exports.createAffectedZone = onDocumentWritten(
 
 
       /*
-      ----------------------------------------------------
-      Final result
-      ----------------------------------------------------
+      ====================================================
+      FINAL RESULT
+      ====================================================
       */
 
       console.log("====================================");
-      console.log("AUTOMATIC ALERT COMPLETED");
+      console.log("NEW AUTOMATIC DISASTER ALERT COMPLETED");
       console.log(`Disaster: ${disaster}`);
       console.log(`Risk: ${risk}`);
       console.log(`Affected area: ${district}`);
       console.log(`Radius: ${radiusMeters} meters`);
-      console.log(`Notifications sent: ${sent}`);
-      console.log(`Citizens skipped: ${skipped}`);
-      console.log(`Notifications failed: ${failed}`);
+      console.log(
+        `Notifications sent: ${sent}`
+      );
+      console.log(
+        `Citizens skipped: ${skipped}`
+      );
+      console.log(
+        `Notifications failed: ${failed}`
+      );
       console.log("====================================");
+
 
       return null;
 
@@ -478,4 +736,3 @@ exports.createAffectedZone = onDocumentWritten(
     }
   }
 );
-
