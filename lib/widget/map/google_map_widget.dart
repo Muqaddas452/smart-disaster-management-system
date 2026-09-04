@@ -14,7 +14,6 @@ import '../../services/rescue_team_service.dart';
 import '../../services/shelter_service.dart';
 
 import 'ai_prediction_card.dart';
-import 'map_legend.dart';
 class GoogleMapWidget extends StatefulWidget {
 
   final double? focusLatitude;
@@ -114,7 +113,7 @@ class _GoogleMapWidgetState extends State<GoogleMapWidget> {
     );
 
     shelterIcon = await BitmapDescriptor.fromAssetImage(
-      const ImageConfiguration(size: Size(48, 48)),
+      const ImageConfiguration(size: Size(64, 64)),
       "assets/icons/shelter.png",
     );
   }
@@ -129,6 +128,8 @@ class _GoogleMapWidgetState extends State<GoogleMapWidget> {
       _updateMarkers();
     });
     _shelterService.getShelters().listen((data) {
+      if (!mounted) return;
+
       setState(() {
         _shelters = data;
       });
@@ -140,6 +141,11 @@ class _GoogleMapWidgetState extends State<GoogleMapWidget> {
 
           _zones = zones;
 
+          // Update markers because shelter visibility
+          // depends on disaster status.
+          _updateMarkers();
+
+          // Update affected-zone circles.
           _updateCircles();
 
         });
@@ -173,44 +179,56 @@ class _GoogleMapWidgetState extends State<GoogleMapWidget> {
   void _updateMarkers() {
     final Set<Marker> markers = {};
 
-    //--------------------------------------------------
-    // Shelter Markers
-    //--------------------------------------------------
+//--------------------------------------------------
+// Shelter Markers
+// Show shelters ONLY when an active disaster exists
+//--------------------------------------------------
 
-    for (final shelter in _shelters) {
-      if (shelter.latitude == 0 || shelter.longitude == 0) {
-        continue;
+    final hasActiveDisaster = _zones.any(
+          (zone) => zone.status.toLowerCase() == "active",
+    );
+
+    if (hasActiveDisaster) {
+      for (final shelter in _shelters) {
+
+        // Ignore shelters without valid coordinates
+        if (shelter.latitude == 0 || shelter.longitude == 0) {
+          continue;
+        }
+
+        markers.add(
+          Marker(
+            markerId: MarkerId("shelter_${shelter.id}"),
+
+            // Shelter location
+            position: LatLng(
+              shelter.latitude,
+              shelter.longitude,
+            ),
+
+            // Use your shelter.png
+            icon: shelterIcon,
+
+            // Information shown when shelter is tapped
+            infoWindow: InfoWindow(
+              title: shelter.name,
+              snippet:
+              "${shelter.city}\nAvailable: ${shelter.available}",
+            ),
+
+            // Open shelter details
+            onTap: () {
+              showDialog(
+                context: context,
+                builder: (_) => ShelterDetailsDialog(
+                  shelter: shelter,
+                ),
+              );
+            },
+          ),
+        );
       }
-
-      markers.add(
-        Marker(
-          markerId: MarkerId("shelter_${shelter.id}"),
-          position: LatLng(
-            shelter.latitude,
-            shelter.longitude,
-          ),
-          icon: BitmapDescriptor.defaultMarkerWithHue(
-            BitmapDescriptor.hueGreen,
-          ),
-          infoWindow: InfoWindow(
-            title: shelter.name,
-            snippet:
-            "${shelter.city}\nAvailable: ${shelter.available}",
-          ),
-          onTap: () {
-
-            showDialog(
-              context: context,
-              builder: (_) => ShelterDetailsDialog(
-                shelter: shelter,
-              ),
-            );
-
-          },
-        ),
-      );
     }
-
     //--------------------------------------------------
     // Disaster Reports
     //--------------------------------------------------
@@ -505,11 +523,6 @@ class _GoogleMapWidgetState extends State<GoogleMapWidget> {
           child: AIPredictionCard(),
         ),
 
-        const Positioned(
-          left: 20,
-          bottom: 20,
-          child: MapLegend(),
-        ),
       ],
     );
   }
