@@ -11,20 +11,38 @@ class AffectedZoneStatistics extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Total number of affected zones
     final totalZones = affectedZones.length;
 
-    final highRisk =
-        affectedZones.where((e) => e.riskLevel == "High").length;
+    // HIGH RISK:
+    // Count both "High" and "Extreme"
+    final highRisk = affectedZones.where((e) {
+      final risk = e.riskLevel.trim().toLowerCase();
 
-    final mediumRisk =
-        affectedZones.where((e) => e.riskLevel == "Medium").length;
+      return risk == "high" || risk == "extreme";
+    }).length;
 
-    final lowRisk =
-        affectedZones.where((e) => e.riskLevel == "Low").length;
+    // MEDIUM RISK:
+    // Count both "Medium" and "Moderate"
+    final mediumRisk = affectedZones.where((e) {
+      final risk = e.riskLevel.trim().toLowerCase();
+
+      return risk == "medium" || risk == "moderate";
+    }).length;
+
+    // LOW RISK:
+    // Count only "Low"
+    final lowRisk = affectedZones.where((e) {
+      final risk = e.riskLevel.trim().toLowerCase();
+
+      return risk == "low";
+    }).length;
 
     return Row(
       children: [
-
+        // ==========================================
+        // TOTAL ZONES
+        // ==========================================
         Expanded(
           child: _buildCard(
             title: "Total Zones",
@@ -36,6 +54,10 @@ class AffectedZoneStatistics extends StatelessWidget {
 
         const SizedBox(width: 15),
 
+        // ==========================================
+        // HIGH RISK
+        // High + Extreme
+        // ==========================================
         Expanded(
           child: _buildCard(
             title: "High Risk",
@@ -47,6 +69,10 @@ class AffectedZoneStatistics extends StatelessWidget {
 
         const SizedBox(width: 15),
 
+        // ==========================================
+        // MEDIUM RISK
+        // Medium + Moderate
+        // ==========================================
         Expanded(
           child: _buildCard(
             title: "Medium Risk",
@@ -58,6 +84,10 @@ class AffectedZoneStatistics extends StatelessWidget {
 
         const SizedBox(width: 15),
 
+        // ==========================================
+        // LOW RISK
+        // Low only
+        // ==========================================
         Expanded(
           child: _buildCard(
             title: "Low Risk",
@@ -66,10 +96,13 @@ class AffectedZoneStatistics extends StatelessWidget {
             color: Colors.green,
           ),
         ),
-
       ],
     );
   }
+
+  // ==========================================
+  // STATISTICS CARD
+  // ==========================================
 
   Widget _buildCard({
     required String title,
@@ -89,7 +122,7 @@ class AffectedZoneStatistics extends StatelessWidget {
         ),
         child: Row(
           children: [
-
+            // Icon
             CircleAvatar(
               radius: 24,
               backgroundColor: color.withOpacity(.12),
@@ -102,10 +135,10 @@ class AffectedZoneStatistics extends StatelessWidget {
 
             const SizedBox(width: 15),
 
+            // Number + title
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-
                 Text(
                   value,
                   style: const TextStyle(
@@ -122,10 +155,8 @@ class AffectedZoneStatistics extends StatelessWidget {
                     color: Colors.grey.shade700,
                   ),
                 ),
-
               ],
             ),
-
           ],
         ),
       ),
