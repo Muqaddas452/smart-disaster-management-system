@@ -7,7 +7,9 @@ import '../../widget/affected_zone_table.dart';
 import '../../widget/affected_zone_form_dialog.dart';
 
 class AffectedZoneScreen extends StatefulWidget {
-  const AffectedZoneScreen({super.key});
+  const AffectedZoneScreen({
+    super.key,
+  });
 
   @override
   State<AffectedZoneScreen> createState() =>
@@ -32,6 +34,9 @@ class _AffectedZoneScreenState
 
         builder: (context, snapshot) {
 
+          // ==========================
+          // LOADING
+          // ==========================
           if (snapshot.connectionState ==
               ConnectionState.waiting) {
             return const Center(
@@ -39,39 +44,56 @@ class _AffectedZoneScreenState
             );
           }
 
+          // ==========================
+          // ERROR
+          // ==========================
           if (snapshot.hasError) {
             return Center(
-              child: Text(snapshot.error.toString()),
+              child: Text(
+                "Error loading affected zones:\n"
+                    "${snapshot.error}",
+              ),
             );
           }
 
-          final affectedZones = snapshot.data ?? [];
+          // ==========================
+          // DATA
+          // ==========================
+          final affectedZones =
+              snapshot.data ?? [];
 
-          final filteredZones = affectedZones.where((zone) {
+          // ==========================
+          // SEARCH
+          // ==========================
+          final searchText =
+          search.toLowerCase().trim();
+
+          final filteredZones =
+          affectedZones.where((zone) {
 
             return zone.zoneName
                 .toLowerCase()
-                .contains(search.toLowerCase()) ||
-
+                .contains(searchText) ||
                 zone.city
                     .toLowerCase()
-                    .contains(search.toLowerCase()) ||
-
+                    .contains(searchText) ||
                 zone.disasterType
                     .toLowerCase()
-                    .contains(search.toLowerCase());
-
+                    .contains(searchText);
           }).toList();
 
           return Padding(
             padding: const EdgeInsets.all(20),
+
             child: Column(
               crossAxisAlignment:
               CrossAxisAlignment.start,
 
               children: [
 
-                /// HEADER
+                // ==========================
+                // HEADER
+                // ==========================
                 Row(
                   mainAxisAlignment:
                   MainAxisAlignment.spaceBetween,
@@ -87,19 +109,20 @@ class _AffectedZoneScreenState
                     ),
 
                     ElevatedButton.icon(
-                      icon: const Icon(Icons.add),
+                      icon: const Icon(
+                        Icons.add,
+                      ),
 
-                      label:
-                      const Text("Add Zone"),
+                      label: const Text(
+                        "Add Zone",
+                      ),
 
                       onPressed: () {
-
                         showDialog(
                           context: context,
                           builder: (_) =>
                           const AffectedZoneFormDialog(),
                         );
-
                       },
                     ),
                   ],
@@ -107,21 +130,26 @@ class _AffectedZoneScreenState
 
                 const SizedBox(height: 20),
 
-                /// STATISTICS
+                // ==========================
+                // STATISTICS
+                // ==========================
                 AffectedZoneStatistics(
                   affectedZones: affectedZones,
                 ),
 
                 const SizedBox(height: 25),
 
-                /// SEARCH
+                // ==========================
+                // SEARCH
+                // ==========================
                 TextField(
                   decoration: InputDecoration(
                     hintText:
                     "Search by Zone, City or Disaster",
 
-                    prefixIcon:
-                    const Icon(Icons.search),
+                    prefixIcon: const Icon(
+                      Icons.search,
+                    ),
 
                     border: OutlineInputBorder(
                       borderRadius:
@@ -141,17 +169,26 @@ class _AffectedZoneScreenState
 
                 const SizedBox(height: 25),
 
-                /// TABLE
+                // ==========================
+                // TABLE
+                // ==========================
                 Expanded(
                   child: Card(
                     elevation: 3,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+
+                    shape:
+                    RoundedRectangleBorder(
+                      borderRadius:
+                      BorderRadius.circular(12),
                     ),
+
                     child: Padding(
-                      padding: const EdgeInsets.all(16),
+                      padding:
+                      const EdgeInsets.all(16),
+
                       child: AffectedZoneTable(
-                        affectedZones: filteredZones,
+                        affectedZones:
+                        filteredZones,
                       ),
                     ),
                   ),

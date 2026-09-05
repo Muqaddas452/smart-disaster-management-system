@@ -24,10 +24,8 @@ class AffectedZoneTable extends StatelessWidget {
         child: DataTable(
           columnSpacing: 25,
 
-          // ==========================
-          // TABLE HEADER COLOR
-          // ==========================
-          headingRowColor: WidgetStateProperty.all(
+          headingRowColor:
+          WidgetStateProperty.all(
             Colors.grey.shade200,
           ),
 
@@ -41,9 +39,6 @@ class AffectedZoneTable extends StatelessWidget {
             DataColumn(label: Text("Action")),
           ],
 
-          // ==========================
-          // TABLE ROWS
-          // ==========================
           rows: affectedZones.map((zone) {
             return DataRow(
               cells: [
@@ -74,16 +69,12 @@ class AffectedZoneTable extends StatelessWidget {
                 // ==========================
                 DataCell(
                   Chip(
-                    backgroundColor: _riskColor(
-                      zone.riskLevel,
-                    ),
+                    backgroundColor:
+                    _riskColor(zone.riskLevel),
                     label: Text(
-                      _displayRisk(
-                        zone.riskLevel,
-                      ),
+                      _displayRisk(zone.riskLevel),
                       style: const TextStyle(
                         color: Colors.white,
-                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ),
@@ -103,14 +94,12 @@ class AffectedZoneTable extends StatelessWidget {
                 // ==========================
                 DataCell(
                   Chip(
-                    backgroundColor: _statusColor(
-                      zone.status,
-                    ),
+                    backgroundColor:
+                    _statusColor(zone.status),
                     label: Text(
                       zone.status,
                       style: const TextStyle(
                         color: Colors.white,
-                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ),
@@ -136,9 +125,10 @@ class AffectedZoneTable extends StatelessWidget {
                         onPressed: () {
                           showDialog(
                             context: context,
-                            builder: (_) => AffectedZoneDialog(
-                              zone: zone,
-                            ),
+                            builder: (_) =>
+                                AffectedZoneDialog(
+                                  zone: zone,
+                                ),
                           );
                         },
                       ),
@@ -174,28 +164,25 @@ class AffectedZoneTable extends StatelessWidget {
                         ),
                         onPressed: () async {
 
-                          // ==================================
-                          // SHOW DELETE CONFIRMATION DIALOG
-                          // ==================================
+                          // Show confirmation
                           final confirm =
                           await showDialog<bool>(
                             context: context,
-                            builder: (dialogContext) {
+                            builder:
+                                (dialogContext) {
                               return AlertDialog(
                                 title: const Text(
                                   "Delete Zone",
                                 ),
 
                                 content: Text(
-                                  "Are you sure you want to delete "
-                                      "'${zone.zoneName}'?",
+                                  "Are you sure you want to "
+                                      "delete '${zone.zoneName}'?",
                                 ),
 
                                 actions: [
 
-                                  // ==========================
                                   // CANCEL
-                                  // ==========================
                                   TextButton(
                                     onPressed: () {
                                       Navigator.pop(
@@ -208,10 +195,16 @@ class AffectedZoneTable extends StatelessWidget {
                                     ),
                                   ),
 
-                                  // ==========================
                                   // DELETE
-                                  // ==========================
                                   ElevatedButton(
+                                    style:
+                                    ElevatedButton
+                                        .styleFrom(
+                                      backgroundColor:
+                                      Colors.red,
+                                      foregroundColor:
+                                      Colors.white,
+                                    ),
                                     onPressed: () {
                                       Navigator.pop(
                                         dialogContext,
@@ -227,19 +220,17 @@ class AffectedZoneTable extends StatelessWidget {
                             },
                           );
 
-                          // ==================================
-                          // USER CANCELLED
-                          // ==================================
+                          // User cancelled
                           if (confirm != true) {
                             return;
                           }
 
+                          // ======================
+                          // DELETE FROM FIRESTORE
+                          // ======================
                           try {
-
-                            // ==================================
-                            // DELETE FIRESTORE DOCUMENT
-                            // ==================================
-                            await service.deleteAffectedZone(
+                            await service
+                                .deleteAffectedZone(
                               zone.id,
                             );
 
@@ -247,33 +238,28 @@ class AffectedZoneTable extends StatelessWidget {
                               return;
                             }
 
-                            // ==================================
-                            // SUCCESS MESSAGE
-                            // ==================================
                             ScaffoldMessenger.of(
                               context,
                             ).showSnackBar(
                               const SnackBar(
+                                backgroundColor:
+                                Colors.green,
                                 content: Text(
-                                  "Affected zone deleted successfully",
+                                  "Affected zone deleted successfully.",
                                 ),
                               ),
                             );
-
                           } catch (e) {
-
                             if (!context.mounted) {
                               return;
                             }
 
-                            // ==================================
-                            // ERROR MESSAGE
-                            // ==================================
                             ScaffoldMessenger.of(
                               context,
                             ).showSnackBar(
                               SnackBar(
-                                backgroundColor: Colors.red,
+                                backgroundColor:
+                                Colors.red,
                                 content: Text(
                                   "Delete failed: $e",
                                 ),
@@ -293,104 +279,59 @@ class AffectedZoneTable extends StatelessWidget {
     );
   }
 
-  // ============================================================
-  // DISPLAY RISK
-  // ============================================================
-  //
-  // Firestore/model can contain:
-  //
-  // Low       -> Low
-  // Medium    -> Medium
-  // Moderate  -> Medium
-  // High      -> High
-  // Extreme   -> High
-  //
-  // This only changes what is displayed in the table.
-  // It does NOT change the Firestore value.
-  //
-  String _displayRisk(String risk) {
+  // ==========================
+  // RISK COLOR
+  // ==========================
+  Color _riskColor(String risk) {
     switch (risk.trim().toLowerCase()) {
-      case "low":
-        return "Low";
+      case "high":
+      case "extreme":
+        return Colors.red;
 
       case "medium":
-        return "Medium";
+      case "moderate":
+        return Colors.orange;
 
+      case "low":
+        return Colors.green;
+
+      default:
+        return Colors.grey;
+    }
+  }
+
+  String _displayRisk(String risk) {
+    switch (risk.trim().toLowerCase()) {
+      case "high":
+      case "extreme":
+        return "High";
+
+      case "medium":
       case "moderate":
         return "Medium";
 
-      case "high":
-        return "High";
-
-      case "extreme":
-        return "High";
+      case "low":
+        return "Low";
 
       default:
         return risk;
     }
   }
 
-  // ============================================================
-  // RISK COLOR
-  // ============================================================
-  Color _riskColor(String risk) {
-    switch (risk.trim().toLowerCase()) {
-
-    // ==========================
-    // LOW
-    // ==========================
-      case "low":
-        return Colors.green;
-
-    // ==========================
-    // MEDIUM / MODERATE
-    // ==========================
-      case "medium":
-      case "moderate":
-        return Colors.orange;
-
-    // ==========================
-    // HIGH / EXTREME
-    // ==========================
-      case "high":
-      case "extreme":
-        return Colors.red;
-
-    // ==========================
-    // UNKNOWN
-    // ==========================
-      default:
-        return Colors.grey;
-    }
-  }
-
-  // ============================================================
+  // ==========================
   // STATUS COLOR
-  // ============================================================
+  // ==========================
   Color _statusColor(String status) {
-    switch (status.trim().toLowerCase()) {
-
-    // ==========================
-    // ACTIVE
-    // ==========================
-      case "active":
+    switch (status) {
+      case "Active":
         return Colors.red;
 
-    // ==========================
-    // MONITORING
-    // ==========================
-      case "monitoring":
+      case "Monitoring":
         return Colors.orange;
 
-    // ==========================
-    // SAFE
-    // ==========================
-      case "safe":
+      case "Safe":
         return Colors.green;
 
-    // ==========================
-    // UNKNOWN
-    // ==========================
       default:
         return Colors.grey;
     }
