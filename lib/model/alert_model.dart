@@ -30,18 +30,30 @@ class AlertModel {
 
     return AlertModel(
       id: doc.id,
-      disaster: data["disasterType"] ?? "",
-      priority: data["priority"] ?? "",
-      area: data["targetArea"] ?? "",
-      status: data["status"] ?? "Sent",
+
+      // Firestore: disaster
+      disaster: data["disaster"] ?? "",
+
+      // Firestore: riskLevel → Flutter calls it priority
+      priority: data["riskLevel"] ?? "",
+
+      // Firestore: city → Flutter calls it area
+      area: data["city"] ?? "",
+
+      status: data["status"] ?? "Active",
+
       message: data["message"] ?? "",
-      date: (data["createdAt"] as Timestamp?)?.toDate() ?? DateTime.now(),
-      createdBy: data["createdBy"] ?? "Admin",
+
+      date: (data["createdAt"] as Timestamp?)?.toDate()
+          ?? DateTime.now(),
+
+      createdBy: data["createdBy"] ?? "Automatic Alert",
+
       affectedUsers: data["affectedUsers"] ?? 0,
+
       readCount: data["readCount"] ?? 0,
     );
   }
-
   Map<String, dynamic> toFirestore() {
     return {
       "disasterType": disaster,
