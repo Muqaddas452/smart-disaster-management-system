@@ -138,15 +138,20 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: List.generate(5, (index) {
-                    return IconButton(
-                      icon: Icon(
-                        index < _rating ? Icons.star : Icons.star_border,
-                        color: primaryDarkGreen,
-                        size: 36,
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 2),
+                      child: IconButton(
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                        icon: Icon(
+                          index < _rating ? Icons.star : Icons.star_border,
+                          color: primaryDarkGreen,
+                          size: 30,
+                        ),
+                        onPressed: () {
+                          setState(() => _rating = index + 1);
+                        },
                       ),
-                      onPressed: () {
-                        setState(() => _rating = index + 1);
-                      },
                     );
                   }),
                 ),

@@ -4,8 +4,6 @@ import 'package:firebase_auth/firebase_auth.dart'; // current logged-in user che
 import 'welcomescreen.dart';
 import 'citizen_screens/citizen_home_screen.dart';
 import 'citizen_screens/profile_completion_screen.dart';
-// NOTE: agar rescue team ki home screen ka file path ya class naam is se
-// alag h, to sirf yehi line update kr dein — baaki logic same rahega
 import 'rescue_team/rescue_home_screen.dart';
 
 class SplashScreen extends StatefulWidget {
@@ -20,18 +18,13 @@ class _SplashScreenState extends State<SplashScreen> {
   @override
   void initState() {
     super.initState();
-    // CHANGED: pehle ye hamesha 3 second baad seedha WelcomeScreen pe
-    // chali jati thi, chahe user pehle se logged-in ho ya na ho.
-    // Ab _checkAuthAndNavigate() decide krta h ke sahi screen kaunsi h.
     Future.delayed(const Duration(seconds: 3), () {
       _checkAuthAndNavigate();
     });
   }
 
   // ========================================================
-  // NEW: Auth check logic — bilkul wahi pattern jo auth_service.dart
-  // k loginUser() function mein use hota h, taake dono jagah consistent
-  // rahe (authIndex se role check karna)
+  // Auth check logic — authIndex se role check karna
   // ========================================================
   Future<void> _checkAuthAndNavigate() async {
     if (!mounted) return;
@@ -51,8 +44,6 @@ class _SplashScreenState extends State<SplashScreen> {
           .doc(currentUser.uid)
           .get();
 
-      // agar authIndex mein entry hi nahi mili (data corrupt/missing ho
-      // sakta h), safest option: sign out kr k WelcomeScreen pe bhej dena
       if (!authIndexDoc.exists) {
         await FirebaseAuth.instance.signOut();
         _goTo(const WelcomeScreen());
@@ -78,21 +69,35 @@ class _SplashScreenState extends State<SplashScreen> {
           _goTo(const ProfileCompletionScreen()); // profile adhoori h
         }
       } else if (role == 'rescue_team') {
-        // Step 3b: rescue team member/leader h — seedha unki home screen
-        _goTo(const RescueTeamHomeScreen());
+        // Step 3b: rescue team member/leader h — fetch team data & navigate
+        final userDoc = await FirebaseFirestore.instance
+            .collection('rescueTeamUsers')
+            .doc(currentUser.uid)
+            .get();
+
+        final userData = userDoc.data();
+        final bool isLeader = userData?['isLeader'] ?? (userData?['role'] == 'leader');
+        final String teamId = userData?['teamId'] ?? '';
+        final String teamName = userData?['teamName'] ?? 'Rescue Team';
+
+        _goTo(
+          RescueTeamHomeScreen(
+            isLeader: isLeader,
+            teamId: teamId,
+            teamName: teamName,
+          ),
+        );
       } else {
-        // Step 3c: admin ya koi aur role (abhi tak dashboard nahi bana),
-        // filhal WelcomeScreen pe bhej dena safest h
+        // Step 3c: admin ya koi aur role, WelcomeScreen pe bhej dena
         _goTo(const WelcomeScreen());
       }
     } catch (e) {
-      // koi bhi error aaye (network issue waghera), safest fallback
-      // WelcomeScreen pe bhej dena h taake user stuck na ho
+      // error fallback
       _goTo(const WelcomeScreen());
     }
   }
 
-  // helper — navigation ka repeated code ek jagah rakhne k liye
+  // helper — navigation
   void _goTo(Widget screen) {
     if (!mounted) return;
     Navigator.pushReplacement(
@@ -109,7 +114,7 @@ class _SplashScreenState extends State<SplashScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            //  LOGO
+            // LOGO
             Image.asset(
               'assets/images/logo.jpeg',
               width: 150,
@@ -136,21 +141,3 @@ class _SplashScreenState extends State<SplashScreen> {
     );
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

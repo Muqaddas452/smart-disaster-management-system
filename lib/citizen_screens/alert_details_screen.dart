@@ -9,9 +9,10 @@ class AlertDetailsScreen extends StatelessWidget {
 
   static const Color _primaryGreen = Color(0xFF1B5E20);
 
-  // Safety guidelines per backend disaster type (matches alert.type, NOT alert.title)
+  // Safety guidelines ab alert.disasterType k mutabiq dikhai jaati hain
+  // (broadcast_alerts collection ka asal field name)
   List<_GuidelineItem> get _guidelines {
-    switch (alert.type) {
+    switch (alert.disasterType) {
       case 'Heatwave':
         return const [
           _GuidelineItem(
@@ -51,7 +52,7 @@ class AlertDetailsScreen extends StatelessWidget {
             text: 'Unplug electrical appliances if possible.',
           ),
         ];
-      case 'Heavy Rains':
+      case 'Heavy Rain':
         return const [
           _GuidelineItem(
             icon: Icons.umbrella_outlined,
@@ -75,6 +76,7 @@ class AlertDetailsScreen extends StatelessWidget {
     }
   }
 
+  // Icon aur uska background color ab AlertModel se seedha aata hai
   IconData get _icon => alert.icon;
   Color get _iconBg => alert.iconBg;
 
@@ -100,6 +102,7 @@ class AlertDetailsScreen extends StatelessWidget {
 
             const SizedBox(height: 20),
 
+            // Title (e.g. "Severe Flood Alert")
             Text(
               alert.title,
               textAlign: TextAlign.center,
@@ -108,6 +111,7 @@ class AlertDetailsScreen extends StatelessWidget {
 
             const SizedBox(height: 6),
 
+            // Date & time — ab createdAt field se aata hai
             Text(
               'Date & Time: ${alert.formattedTime}',
               style: const TextStyle(fontSize: 13, color: Color(0xFF9E9E9E)),
@@ -115,6 +119,7 @@ class AlertDetailsScreen extends StatelessWidget {
 
             const SizedBox(height: 20),
 
+            // Admin ka likha hua message (subtitle) yahan box mein show hota hai
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(16),
@@ -140,6 +145,7 @@ class AlertDetailsScreen extends StatelessWidget {
 
             const SizedBox(height: 14),
 
+            // Guidelines list ko loop kar k dikha rahe hain
             ..._guidelines.map(
                   (g) => Padding(
                 padding: const EdgeInsets.only(bottom: 14),
@@ -169,6 +175,7 @@ class AlertDetailsScreen extends StatelessWidget {
 
             const SizedBox(height: 32),
 
+            // Emergency call aur nearest help center k buttons (abhi TODO hain)
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -259,27 +266,3 @@ class _ActionButton extends StatelessWidget {
     );
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

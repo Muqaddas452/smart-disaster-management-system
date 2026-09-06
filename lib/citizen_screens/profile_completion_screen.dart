@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:geolocator/geolocator.dart'; // Used to get the device's real-time GPS location
 import '../services/fcm_token_service.dart';
 
 class ProfileCompletionScreen extends StatefulWidget {
@@ -17,6 +18,7 @@ class _ProfileCompletionScreenState extends State<ProfileCompletionScreen> {
   final TextEditingController _phoneController = TextEditingController();
 
   bool _isLoading = false;
+  bool _isFetchingLocation = false; // True while we are getting GPS coordinates from the device
 
   @override
   void initState() {
@@ -37,6 +39,71 @@ class _ProfileCompletionScreenState extends State<ProfileCompletionScreen> {
     }
   }
 
+  // Gets the user's current GPS position from the device.
+  // Returns null if location services/permission are not available, and shows the reason to the user.
+  Future<Position?> _getCurrentLocation() async {
+    // Step 1: Check if location services (GPS) are turned on for the whole device
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please turn on Location Services to continue.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return null;
+    }
+
+    // Step 2: Check current permission status for this app
+    LocationPermission permission = await Geolocator.checkPermission();
+
+    // Step 3: If permission was never asked or was denied once, ask the user again
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Location permission is required to save your address.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return null;
+      }
+    }
+
+    // Step 4: If user permanently denied permission, they must enable it from phone settings
+    if (permission == LocationPermission.deniedForever) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Location permission is permanently denied. Please enable it from phone settings.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return null;
+    }
+
+    // Step 5: Permission is granted, so fetch the actual current position (lat/long)
+    try {
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+      return position;
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to get location: $e'), backgroundColor: Colors.red),
+        );
+      }
+      return null;
+    }
+  }
+
   Future<void> _saveProfileToFirestore() async {
     final name = _nameController.text.trim();
     final address = _addressController.text.trim();
@@ -51,17 +118,37 @@ class _ProfileCompletionScreenState extends State<ProfileCompletionScreen> {
 
     setState(() {
       _isLoading = true;
+      _isFetchingLocation = true; // Show that we are currently fetching GPS location
     });
+
+    // Get the device's current real-time latitude and longitude
+    final position = await _getCurrentLocation();
+
+    setState(() {
+      _isFetchingLocation = false;
+    });
+
+    // If location could not be fetched (permission/service issue), stop here.
+    // The _getCurrentLocation() method has already shown the reason via SnackBar.
+    if (position == null) {
+      setState(() {
+        _isLoading = false;
+      });
+      return;
+    }
 
     try {
       String uid = FirebaseAuth.instance.currentUser!.uid;
 
-      // 1. Update citizens document
+      // 1. Update citizens document for the already logged-in user (uid comes from FirebaseAuth)
       await FirebaseFirestore.instance.collection('citizens').doc(uid).update({
         'name': name,
         'address': address,
         'phone': phone,
         'isProfileComplete': true,
+        'latitude': position.latitude, // Real-time GPS latitude
+        'longitude': position.longitude, // Real-time GPS longitude
+        'locationUpdatedAt': FieldValue.serverTimestamp(), // When the location was last captured
       });
 
       // 2. Ensure FCM Token is saved & listening on Profile Completion
@@ -170,7 +257,22 @@ class _ProfileCompletionScreenState extends State<ProfileCompletionScreen> {
                             elevation: 2,
                           ),
                           child: _isLoading
-                              ? const CircularProgressIndicator(color: Colors.white)
+                              ? Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const SizedBox(
+                                height: 20,
+                                width: 20,
+                                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5),
+                              ),
+                              const SizedBox(width: 12),
+                              Text(
+                                // Different message depending on which step is currently happening
+                                _isFetchingLocation ? 'Getting location...' : 'Saving...',
+                                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.white),
+                              ),
+                            ],
+                          )
                               : const Text(
                             'Save & Continue',
                             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),

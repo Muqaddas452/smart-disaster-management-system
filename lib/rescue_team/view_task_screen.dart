@@ -1,304 +1,319 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'assign_members_screen.dart';
 
-enum TaskPriority { high, medium, low }
+// Shared Task Details screen for BOTH leader and member.
+// Buttons shown depend on (a) the signed-in user's role and (b) the task's
+// current status, so the whole dispatched -> accepted -> assigned ->
+// in_progress -> resolved lifecycle lives in this one screen.
+class ViewTaskScreen extends StatefulWidget {
+  final String taskId;
+  const ViewTaskScreen({super.key, required this.taskId});
 
-class MyTask {
-  final String title;
-  final String location;
-  final String description;
-  final String timeAgo;
-  final TaskPriority priority;
-
-  const MyTask({
-    required this.title,
-    required this.location,
-    required this.description,
-    required this.timeAgo,
-    required this.priority,
-  });
+  @override
+  State<ViewTaskScreen> createState() => _ViewTaskScreenState();
 }
-// DUMMY DATA
-const List<MyTask> kMyTasks = [
-  MyTask(
-    title: 'Flood Rescue',
-    location: 'Sector 7 - Riverside Embankment',
-    description:
-    'Urgent extraction required for two civilians trapped on a residential rooftop. Water levels rising at 2cm/hr.',
-    timeAgo: '10 mins ago',
-    priority: TaskPriority.high,
-  ),
-  MyTask(
-    title: 'Medical Escort',
-    location: 'Point Bravo - Medical Triage Alpha',
-    description:
-    'Provide security and transport assistance for critical medical supplies arriving from the central depot.',
-    timeAgo: '24 mins ago',
-    priority: TaskPriority.medium,
-  ),
-  MyTask(
-    title: 'Logistics Support',
-    location: 'West Gateway - Staging Area',
-    description:
-    'Inventory check of emergency rations and water pallets at the west gateway distribution hub.',
-    timeAgo: '1 hr ago',
-    priority: TaskPriority.low,
-  ),
-];
-// MY TASKS SCREEN
 
-class MyTasksScreen extends StatelessWidget {
-  const MyTasksScreen({super.key});
+class _ViewTaskScreenState extends State<ViewTaskScreen> {
+  static const Color kGreen = Color(0xFF1B5E38);
 
-  static const Color kGreen = Color(0xFF1E5631);
+  bool _isLeader = false;
+  String? _uid;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRole();
+  }
+
+  Future<void> _loadRole() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    _uid = uid;
+    if (uid == null) return;
+    final doc = await FirebaseFirestore.instance.collection('rescueTeamUsers').doc(uid).get();
+    final data = doc.data() ?? {};
+    final role = data['role'] ?? '';
+    if (mounted) {
+      setState(() {
+        _isLeader = data['isLeader'] == true || role == 'rescue_leader' || role == 'team_leader';
+      });
+    }
+  }
+
+  DocumentReference<Map<String, dynamic>> get _taskRef =>
+      FirebaseFirestore.instance.collection('tasks').doc(widget.taskId);
+
+  Future<void> _acceptTask() async {
+    setState(() => _busy = true);
+    try {
+      await _taskRef.update({
+        'status': 'accepted',
+        'acceptedBy': _uid,
+        'acceptedAt': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      _showMessage('Could not accept task: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _startTask() async {
+    setState(() => _busy = true);
+    try {
+      await _taskRef.update({
+        'status': 'in_progress',
+        'startedBy': _uid,
+        'startedAt': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      _showMessage('Could not start task: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _markCompleted() async {
+    setState(() => _busy = true);
+    try {
+      await _taskRef.update({
+        'status': 'resolved',
+        'resolvedBy': _uid,
+        'resolvedAt': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      _showMessage('Could not mark task completed: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
-      body: Column(
-        children: [
-          _topBar(),
-          Expanded(
-            child: ListView.separated(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-              itemCount: kMyTasks.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 14),
-              itemBuilder: (_, i) => _taskCard(context, kMyTasks[i]),
-            ),
-          ),
-          _bottomNav(context),
-        ],
-      ),
-    );
-  }
-
-  // ── TOP BAR
-  Widget _topBar() {
-    return Container(
-      color: kGreen,
-      child: SafeArea(
-        bottom: false,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          child: Row(
-            children: [
-              const Icon(Icons.menu, color: Colors.white, size: 26),
-              const SizedBox(width: 14),
-              const Expanded(
-                child: Text(
-                  'MY TASKS',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 1.2,
-                  ),
-                ),
-              ),
-              const Icon(Icons.notifications_outlined, color: Colors.white, size: 26),
-            ],
-          ),
+      backgroundColor: const Color(0xFFF5F5E8),
+      appBar: AppBar(
+        backgroundColor: kGreen,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
         ),
+        title: const Text('Task Details',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
+        centerTitle: true,
       ),
-    );
-  }
+      body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+        stream: _taskRef.snapshots(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator(color: kGreen));
+          }
+          if (!snapshot.hasData || !snapshot.data!.exists) {
+            return const Center(child: Text('Task not found'));
+          }
 
-  // ── TASK CARD
-  Widget _taskCard(BuildContext context, MyTask task) {
-    final p = _priorityStyle(task.priority);
+          final data = snapshot.data!.data() ?? {};
+          final String type = data['type'] ?? 'Task';
+          final String priority = (data['priority'] ?? 'medium').toString().toLowerCase();
+          final String description = data['description'] ?? '-';
+          final String address = data['address'] ?? 'Address not available';
+          final double? lat = (data['lat'] as num?)?.toDouble();
+          final double? lng = (data['lng'] as num?)?.toDouble();
+          final String status = data['status'] ?? 'dispatched';
+          final List assignedMembers = data['assignedMembers'] ?? [];
 
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade200),
-        boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 6, offset: const Offset(0, 2)),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // ── Priority badge + time
-          Padding(
-            padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          final priorityColors = {
+            'high': const [Color(0xFFFCEBEB), Color(0xFF791F1F)],
+            'medium': const [Color(0xFFFAEEDA), Color(0xFF633806)],
+            'low': const [Color(0xFFE6F1FB), Color(0xFF042C53)],
+          };
+          final colors = priorityColors[priority] ?? priorityColors['medium']!;
+
+          final bool amAssignedMember =
+              (data['assignedMemberIds'] as List?)?.contains(_uid) ?? false;
+
+          return SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: p.bgColor,
-                    borderRadius: BorderRadius.circular(6),
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: Colors.grey.shade200),
                   ),
-                  child: Text(
-                    p.label,
-                    style: TextStyle(
-                      color: p.textColor,
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 1.1,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          decoration:
+                          BoxDecoration(color: colors[0], borderRadius: BorderRadius.circular(20)),
+                          child: Text('${priority[0].toUpperCase()}${priority.substring(1)} priority',
+                              style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: colors[1])),
+                        ),
+                      ]),
+                      const SizedBox(height: 14),
+                      Text('Emergency: $type',
+                          style: const TextStyle(
+                              fontSize: 19, fontWeight: FontWeight.bold, color: Colors.red)),
+                      const SizedBox(height: 16),
+                      const Text('DESCRIPTION',
+                          style: TextStyle(
+                              fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black45, letterSpacing: 1)),
+                      const SizedBox(height: 6),
+                      Text(description, style: const TextStyle(fontSize: 14, color: Colors.black87, height: 1.5)),
+                      const SizedBox(height: 18),
+                      const Text('LOCATION',
+                          style: TextStyle(
+                              fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black45, letterSpacing: 1)),
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                            color: const Color(0xFFE8F4FD), borderRadius: BorderRadius.circular(10)),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Icon(Icons.location_on, size: 18, color: kGreen),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(address,
+                                      style: const TextStyle(
+                                          fontSize: 14, fontWeight: FontWeight.w600, color: Colors.black87)),
+                                  if (lat != null && lng != null) ...[
+                                    const SizedBox(height: 3),
+                                    Text('Lat: ${lat.toStringAsFixed(4)}, Lng: ${lng.toStringAsFixed(4)}',
+                                        style: const TextStyle(fontSize: 12, color: Colors.black45)),
+                                  ],
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                if (assignedMembers.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  const Text('ASSIGNED TEAM MEMBERS',
+                      style: TextStyle(
+                          fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black45, letterSpacing: 1)),
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
+                    child: Column(
+                      children: assignedMembers.map((m) {
+                        final name = (m is Map ? m['name'] : null) ?? 'Member';
+                        return ListTile(
+                          leading: const CircleAvatar(
+                              backgroundColor: Color(0xFFE8F4FD),
+                              child: Icon(Icons.person, color: kGreen, size: 20)),
+                          title: Text(name, style: const TextStyle(fontSize: 14)),
+                        );
+                      }).toList(),
                     ),
                   ),
-                ),
-                Text(
-                  task.timeAgo,
-                  style: const TextStyle(fontSize: 12, color: Colors.black45),
-                ),
+                ],
+
+                const SizedBox(height: 24),
+                _actionArea(status, amAssignedMember, data),
               ],
             ),
-          ),
-
-          // ── Title
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14),
-            child: Text(
-              task.title,
-              style: const TextStyle(
-                  fontSize: 22, fontWeight: FontWeight.bold, color: Colors.black87),
-            ),
-          ),
-
-          const SizedBox(height: 6),
-
-          // ── Location
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14),
-            child: Row(children: [
-              const Icon(Icons.location_on_outlined, size: 16, color: Colors.black54),
-              const SizedBox(width: 4),
-              Text(task.location,
-                  style: const TextStyle(fontSize: 13, color: Colors.black54)),
-            ]),
-          ),
-
-          const SizedBox(height: 10),
-
-          // ── Description
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14),
-            child: Text(
-              task.description,
-              style: const TextStyle(fontSize: 13, color: Colors.black54, height: 1.5),
-            ),
-          ),
-
-          const SizedBox(height: 14),
-
-          // ── View Details button
-          GestureDetector(
-            onTap: () {},
-            child: Container(
-              width: double.infinity,
-              margin: const EdgeInsets.fromLTRB(10, 0, 10, 10),
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              decoration: BoxDecoration(
-                color: kGreen,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              alignment: Alignment.center,
-              child: const Text(
-                'View Details',
-                style: TextStyle(
-                    color: Colors.white, fontWeight: FontWeight.w600, fontSize: 15),
-              ),
-            ),
-          ),
-        ],
+          );
+        },
       ),
     );
   }
 
-  // ── PRIORITY STYLE HELPER
-  _PriorityStyle _priorityStyle(TaskPriority p) => switch (p) {
-    TaskPriority.high => _PriorityStyle(
-      label: 'HIGH PRIORITY',
-      bgColor: const Color(0xFFFFEBEE),
-      textColor: const Color(0xFFD32F2F),
-    ),
-    TaskPriority.medium => _PriorityStyle(
-      label: 'MEDIUM PRIORITY',
-      bgColor: const Color(0xFFFFF8E1),
-      textColor: const Color(0xFFE65100),
-    ),
-    TaskPriority.low => _PriorityStyle(
-      label: 'LOW PRIORITY',
-      bgColor: const Color(0xFFE3F2FD),
-      textColor: const Color(0xFF1565C0),
-    ),
-  };
+  // Decides which button(s) to show based on role + current status.
+  Widget _actionArea(String status, bool amAssignedMember, Map<String, dynamic> data) {
+    // LEADER actions
+    if (_isLeader) {
+      if (status == 'dispatched') {
+        return _primaryButton('Accept task', Icons.check, _busy ? null : _acceptTask);
+      }
+      if (status == 'accepted') {
+        return _primaryButton('Assign to team members', Icons.group_add, _busy
+            ? null
+            : () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => AssignMembersScreen(
+                taskId: widget.taskId,
+                teamId: data['teamId'] ?? '',
+              ),
+            ),
+          );
+        });
+      }
+      // assigned / in_progress / resolved -> leader just monitors, no action button
+      return _statusNote(status);
+    }
 
-  // ── BOTTOM NAV
-  Widget _bottomNav(BuildContext context) {
-    const items = [
-      {'icon': Icons.home_rounded,        'label': 'Home'},
-      {'icon': Icons.assignment_outlined, 'label': 'Tasks'},
-      {'icon': Icons.map_outlined,        'label': 'Map'},
-      {'icon': Icons.person_outline,      'label': 'Profile'},
-    ];
+    // MEMBER actions (only if this member is actually assigned to the task)
+    if (amAssignedMember) {
+      if (status == 'assigned') {
+        return _primaryButton('Start task', Icons.play_arrow, _busy ? null : _startTask);
+      }
+      if (status == 'in_progress') {
+        return _primaryButton('Mark completed', Icons.task_alt, _busy ? null : _markCompleted);
+      }
+    }
 
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [BoxShadow(
-            color: Colors.black.withOpacity(0.08),
-            blurRadius: 10, offset: const Offset(0, -2))],
-      ),
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 6),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: List.generate(items.length, (i) {
-              final isTasks = i == 1;
-              return GestureDetector(
-                onTap: () {
-                  if (i == 0) Navigator.pop(context);
-                },
-                behavior: HitTestBehavior.opaque,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // Tasks tab — circular green bg
-                    isTasks
-                        ? Container(
-                      width: 52, height: 52,
-                      decoration: const BoxDecoration(
-                          color: kGreen, shape: BoxShape.circle),
-                      child: Icon(items[i]['icon'] as IconData,
-                          color: Colors.white, size: 24),
-                    )
-                        : Icon(items[i]['icon'] as IconData,
-                        color: Colors.black54, size: 24),
-                    const SizedBox(height: 3),
-                    Text(
-                      items[i]['label'] as String,
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: isTasks ? kGreen : Colors.black54,
-                        fontWeight: isTasks ? FontWeight.bold : FontWeight.normal,
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            }),
-          ),
+    return _statusNote(status);
+  }
+
+  Widget _primaryButton(String label, IconData icon, VoidCallback? onPressed) {
+    return SizedBox(
+      width: double.infinity,
+      height: 52,
+      child: ElevatedButton.icon(
+        onPressed: onPressed,
+        icon: Icon(icon, color: Colors.white),
+        label: Text(label,
+            style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: kGreen,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
       ),
     );
   }
-}
 
-// ── PRIORITY STYLE DATA CLASS
-class _PriorityStyle {
-  final String label;
-  final Color bgColor;
-  final Color textColor;
-  const _PriorityStyle({
-    required this.label,
-    required this.bgColor,
-    required this.textColor,
-  });
+  Widget _statusNote(String status) {
+    final labels = {
+      'assigned': 'Waiting for the assigned member to start this task',
+      'in_progress': 'This task is currently in progress',
+      'resolved': 'This task has been resolved',
+    };
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(10)),
+      child: Text(labels[status] ?? 'Status: $status',
+          textAlign: TextAlign.center, style: const TextStyle(color: Colors.black54, fontSize: 13)),
+    );
+  }
 }

@@ -107,6 +107,18 @@ class _HomeScreenState extends State<HomeScreen> {
           _userLng = position.longitude;
         });
       }
+
+      // Save this location to the logged-in user's citizens document.
+      // This covers users who completed their profile before location capture existed,
+      // and also keeps the location fresh every time they open the Home screen.
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        await FirebaseFirestore.instance.collection('citizens').doc(user.uid).set({
+          'latitude': position.latitude,
+          'longitude': position.longitude,
+          'locationUpdatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true)); // merge: true so we don't overwrite name/address/phone etc.
+      }
     } catch (e) {
       // ignore
     }

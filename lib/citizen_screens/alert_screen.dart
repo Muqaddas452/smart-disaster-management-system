@@ -1,82 +1,86 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'alert_details_screen.dart';
 
 // ── Alert Model ───────────────────────────────────────────────────────────────
-// `type` ab backend ke disaster label ke sath match karta hai
-// (Flood / Storm / Heatwave / Heavy Rains) — icon/color yahin se decide hote hain.
+// Yeh model ab "broadcast_alerts" collection ke asal fields se banta hai —
+// wahi collection jahan se citizen ko live/real alerts bhejay jaate hain.
 class AlertModel {
   final String docId;
-  final String type; // e.g. "Flood", "Storm", "Heatwave", "Heavy Rains"
-  final String risk; // e.g. "Low" / "Medium" / "High"
-  final String district;
-  final DateTime time;
+  final String disasterType; // e.g. "Flood", "Storm", "Heatwave", "Heavy Rain"
+  final String priority;     // "Low" / "Medium" / "High"
+  final String targetArea;   // admin ne jo area likha (e.g. "M.B.Din")
+  final String message;      // admin ka type kiya hua alert message
+  final DateTime createdAt;
 
   const AlertModel({
     required this.docId,
-    required this.type,
-    required this.risk,
-    required this.district,
-    required this.time,
+    required this.disasterType,
+    required this.priority,
+    required this.targetArea,
+    required this.message,
+    required this.createdAt,
   });
 
+  // Firestore document ko AlertModel mein convert karta hai
   factory AlertModel.fromFirestore(String id, Map<String, dynamic> data) {
+    // createdAt Firestore mein Timestamp type hai, isliye pehle usko check kar k convert kar rahe hain
+    final rawCreatedAt = data['createdAt'];
+    final DateTime createdAt =
+    (rawCreatedAt is Timestamp) ? rawCreatedAt.toDate() : DateTime.now();
+
     return AlertModel(
       docId: id,
-      type: data["disaster"] ?? "Unknown",
-      risk: data["risk"] ?? "Low",
-      district: data["district"] ?? "",
-      time: DateTime.tryParse(data["time"] ?? "") ?? DateTime.now(),
+      disasterType: data['disasterType'] ?? 'Unknown',
+      priority: data['priority'] ?? 'Medium',
+      targetArea: data['targetArea'] ?? '',
+      message: data['message'] ?? '',
+      createdAt: createdAt,
     );
   }
 
+  // Card aur details screen pe bada title
   String get title {
-    switch (type) {
+    switch (disasterType) {
       case "Flood":
         return "Severe Flood Alert";
       case "Storm":
         return "Storm Warning";
       case "Heatwave":
         return "Heatwave Warning";
-      case "Heavy Rains":
+      case "Heavy Rain": // NOTE: singular rakha hai, admin dashboard k exact spelling se match karna
         return "Heavy Rain Alert";
       default:
-        return "$type Alert";
+        return "$disasterType Alert";
     }
   }
 
-  String get subtitle {
-    switch (type) {
-      case "Flood":
-        return "Flooding risk detected in $district. Risk level: $risk.";
-      case "Storm":
-        return "Storm conditions detected in $district. Risk level: $risk.";
-      case "Heatwave":
-        return "High temperatures detected in $district. Risk level: $risk.";
-      case "Heavy Rains":
-        return "Heavy rainfall detected in $district. Risk level: $risk.";
-      default:
-        return "$district — risk level: $risk.";
-    }
-  }
+  // Chota description — admin ka apna likha hua message directly dikhate hain
+  String get subtitle =>
+      message.isNotEmpty ? message : "$disasterType alert in your area.";
 
   String get formattedTime {
     final now = DateTime.now();
-    final isToday = time.year == now.year && time.month == now.month && time.day == now.day;
-    final timeStr = DateFormat('h:mm a').format(time);
-    return isToday ? "Today $timeStr" : "${DateFormat('MMM d').format(time)} $timeStr";
+    final isToday = createdAt.year == now.year &&
+        createdAt.month == now.month &&
+        createdAt.day == now.day;
+    final timeStr = DateFormat('h:mm a').format(createdAt);
+    return isToday
+        ? "Today $timeStr"
+        : "${DateFormat('MMM d').format(createdAt)} $timeStr";
   }
 
   IconData get icon {
-    switch (type) {
+    switch (disasterType) {
       case "Flood":
         return Icons.home_outlined;
       case "Storm":
         return Icons.thunderstorm_outlined;
       case "Heatwave":
         return Icons.wb_sunny_outlined;
-      case "Heavy Rains":
+      case "Heavy Rain":
         return Icons.cloud_outlined;
       default:
         return Icons.warning_amber_outlined;
@@ -84,19 +88,35 @@ class AlertModel {
   }
 
   Color get iconBg {
-    switch (type) {
+    switch (disasterType) {
       case "Flood":
         return const Color(0xFFE53935);
       case "Storm":
         return const Color(0xFF5E35B1);
       case "Heatwave":
         return const Color(0xFFFB8C00);
-      case "Heavy Rains":
+      case "Heavy Rain":
         return const Color(0xFFFDD835);
       default:
         return const Color(0xFF757575);
     }
   }
+}
+
+// Citizen k address aur admin k targetArea ke darmiyan keyword match check karta hai.
+// Yeh bilkul wahi logic hai jo home screen k _LiveAlertBanner mein hai —
+// taake dono jagah behavior consistent rahe.
+bool _hasMatchingKeyword(String targetArea, String citizenAddress) {
+  List<String> tokenize(String input) {
+    final normalized =
+    input.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), ' ');
+    return normalized.split(' ').where((w) => w.trim().length >= 3).toList();
+  }
+
+  final targetTokens = tokenize(targetArea).toSet();
+  final addressTokens = tokenize(citizenAddress).toSet();
+
+  return targetTokens.intersection(addressTokens).isNotEmpty;
 }
 
 // ── Alerts Screen ─────────────────────────────────────────────────────────────
@@ -106,52 +126,88 @@ class AlertsScreen extends StatelessWidget {
   static const Color _primaryGreen = Color(0xFF1B5E20);
   static const Color _bgColor = Color(0xFFF0F2F5);
 
-  // TODO: is district ko user ke profile/selected-location se dynamically set karein
-  static const String _currentDistrict = "Karachi";
-
   @override
   Widget build(BuildContext context) {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+
     return Scaffold(
       backgroundColor: _bgColor,
       appBar: _buildAppBar(context),
-      body: StreamBuilder<QuerySnapshot>(
+      body: uid == null
+          ? const Center(child: Text("Please log in to see alerts."))
+      // Pehle citizen ka address nikal rahe hain, taake targetArea se match kar sakein
+          : StreamBuilder<DocumentSnapshot>(
         stream: FirebaseFirestore.instance
-            .collection("alerts")
-            .where("district", isEqualTo: _currentDistrict)
-            .where("disaster", isNotEqualTo: "Normal")
-            .orderBy("disaster") // Firestore rule: isNotEqualTo ke sath orderBy usi field pe pehle chahiye
-            .orderBy("time", descending: true)
-            .limit(50)
+            .collection('citizens')
+            .doc(uid)
             .snapshots(),
-        builder: (context, snapshot) {
-          if (snapshot.hasError) {
-            return Center(child: Text("Error: ${snapshot.error}"));
-          }
-          if (!snapshot.hasData) {
+        builder: (context, citizenSnapshot) {
+          if (!citizenSnapshot.hasData || !citizenSnapshot.data!.exists) {
             return const Center(child: CircularProgressIndicator());
           }
 
-          final docs = snapshot.data!.docs;
-          if (docs.isEmpty) {
-            return const Center(child: Text("No active alerts right now."));
+          final citizenData =
+          citizenSnapshot.data!.data() as Map<String, dynamic>?;
+          final String address = citizenData?['address'] ?? '';
+
+          if (address.isEmpty) {
+            return const Center(
+              child: Padding(
+                padding: EdgeInsets.all(20),
+                child: Text(
+                  "Apna address profile mein add karein taake aapko relevant alerts mil sakein.",
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            );
           }
 
-          final alerts = docs
-              .map((d) => AlertModel.fromFirestore(d.id, d.data() as Map<String, dynamic>))
-              .toList();
+          // Ab asal "broadcast_alerts" collection se Sent alerts nikal rahe hain
+          return StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance
+                .collection('broadcast_alerts')
+                .where('status', isEqualTo: 'Sent')
+                .orderBy('createdAt', descending: true)
+                .limit(50)
+                .snapshots(),
+            builder: (context, alertSnapshot) {
+              if (alertSnapshot.hasError) {
+                return Center(child: Text("Error: ${alertSnapshot.error}"));
+              }
+              if (!alertSnapshot.hasData) {
+                return const Center(child: CircularProgressIndicator());
+              }
 
-          return ListView.separated(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-            itemCount: alerts.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 14),
-            itemBuilder: (context, index) {
-              final alert = alerts[index];
-              return _AlertCard(
-                alert: alert,
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => AlertDetailsScreen(alert: alert)),
+              final docs = alertSnapshot.data!.docs;
+
+              // Sirf wo alerts rakh rahe hain jinka targetArea citizen k address se match ho
+              final alerts = docs
+                  .map((d) => AlertModel.fromFirestore(
+                  d.id, d.data() as Map<String, dynamic>))
+                  .where((alert) =>
+                  _hasMatchingKeyword(alert.targetArea, address))
+                  .toList();
+
+              if (alerts.isEmpty) {
+                return const Center(
+                    child: Text("No active alerts for your area right now."));
+              }
+
+              return ListView.separated(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                itemCount: alerts.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 14),
+                itemBuilder: (context, index) {
+                  final alert = alerts[index];
+                  return _AlertCard(
+                    alert: alert,
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => AlertDetailsScreen(alert: alert)),
+                      );
+                    },
                   );
                 },
               );
@@ -244,27 +300,3 @@ class _AlertCard extends StatelessWidget {
     );
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

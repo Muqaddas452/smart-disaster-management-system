@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart'; // import Flutter's basic UI toolkit
 import '/../../citizen_screens/signupscreen.dart'; // import the Sign Up screen file
 import 'citizen_screens/login_screen.dart'; // import the Login screen file
-import 'rescue_team/rescue_registration_screen.dart'; // import the Rescue Registration screen file
+import 'rescue_team/rescue_role_selection_screen.dart'; // import the Rescue Role Selection screen file
 
 class WelcomeScreen extends StatelessWidget {
   // this screen never changes on its own (no setState needed), so it's Stateless
@@ -178,7 +178,7 @@ class WelcomeScreen extends StatelessWidget {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => const RescueRegistrationScreen(), // open Rescue Registration screen
+                  builder: (context) => const RescueRoleSelectionScreen(), // open Rescue Role Selection screen
                 ),
               );
             },

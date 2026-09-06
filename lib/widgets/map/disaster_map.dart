@@ -1,6 +1,8 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart'; // <-- Added this missing import
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 
@@ -14,19 +16,50 @@ class DisasterMap extends StatefulWidget {
   const DisasterMap({
     super.key,
     this.isAdmin = false,
-
+    this.zonesStream,
+    this.isRescueView = false,
+    this.initialCameraPosition,
+    this.autoFollowLocation = true,
+    this.showControls = true,
   });
 
-  /// true = Admin Dashboard
-  /// false = User App
+  /// true = Admin Dashboard / Rescue Tasks tab
+  /// false = User App / Rescue Affected-Zones tab
   final bool isAdmin;
+
+  /// Optional override for where the polygons come from.
+  ///
+  /// If null, defaults to MapService.getAffectedZones() — the
+  /// original behavior (Citizen app, Rescue "Affected Zones" tab).
+  ///
+  /// Pass MapService.getTaskZones(...) here for the Rescue
+  /// "Tasks" map tab instead.
+  final Stream<List<PolygonModel>>? zonesStream;
+
+  /// true = wording on the "inside a zone" banner is written for
+  /// a rescue team member/leader (reported zone + recommended
+  /// action) instead of a citizen (evacuation safety tip).
+  final bool isRescueView;
+
+  /// Optional fixed camera target — used by the Home screen's
+  /// compact alert-preview map to center on that specific alert
+  /// instead of the device's current location.
+  final CameraPosition? initialCameraPosition;
+
+  /// When false, the map does NOT auto-animate to the device's
+  /// current location on load. Used by the Home screen preview,
+  /// which should stay centered on the alert, not the user.
+  final bool autoFollowLocation;
+
+  /// When false, hides the floating "my location" / "refresh"
+  /// buttons — used for the small Home screen preview map.
+  final bool showControls;
 
   @override
   State<DisasterMap> createState() => _DisasterMapState();
 }
 
 class _DisasterMapState extends State<DisasterMap> {
-
   //----------------------------------------------------------
   // Services
   //----------------------------------------------------------
@@ -69,6 +102,12 @@ class _DisasterMapState extends State<DisasterMap> {
   LatLng? _currentLocation;
 
   //----------------------------------------------------------
+  // Zone the citizen is currently inside (null = safe / no active zone)
+  //----------------------------------------------------------
+
+  PolygonModel? _currentAlertZone;
+
+  //----------------------------------------------------------
   // UI State
   //----------------------------------------------------------
 
@@ -80,8 +119,7 @@ class _DisasterMapState extends State<DisasterMap> {
   // Initial Camera Position
   //----------------------------------------------------------
 
-  static const CameraPosition _initialCameraPosition =
-  CameraPosition(
+  static const CameraPosition _initialCameraPosition = CameraPosition(
     target: LatLng(32.5865, 73.4918),
     zoom: 15,
   );
@@ -93,55 +131,17 @@ class _DisasterMapState extends State<DisasterMap> {
   @override
   void initState() {
     super.initState();
-
     _initializeMap();
-    _loadAffectedZones();
   }
 
-  void _loadAffectedZones() {
-
-    MapService.instance
-        .getAffectedZones()
-        .listen((zones) {
-
-      setState(() {
-
-        _affectedZones = zones;
-
-        _polygons = zones.map((zone) {
-
-          return Polygon(
-
-            polygonId: zone.polygonId,
-
-            points: zone.coordinates,
-
-            strokeWidth: 4,
-
-            strokeColor: zone.strokeColor,
-
-            fillColor: zone.fillColor,
-
-          );
-
-        }).toSet();
-
-      });
-
-    });
-
-  }
   //----------------------------------------------------------
   // Initialize Map
   //----------------------------------------------------------
 
   Future<void> _initializeMap() async {
     await _checkLocationPermission();
-
     await _getCurrentLocation();
-
-    _startFirestoreListeners() ;
-
+    _startFirestoreListeners();
   }
 
   //----------------------------------------------------------
@@ -150,15 +150,12 @@ class _DisasterMapState extends State<DisasterMap> {
 
   @override
   void dispose() {
-
     _polygonSubscription?.cancel();
-
     _rescueSubscription?.cancel();
-
     _mapController?.dispose();
-
     super.dispose();
   }
+
   //----------------------------------------------------------
   // Check Location Permission
   //----------------------------------------------------------
@@ -167,7 +164,6 @@ class _DisasterMapState extends State<DisasterMap> {
     bool serviceEnabled;
     LocationPermission permission;
 
-    // Check if location service is enabled
     serviceEnabled = await Geolocator.isLocationServiceEnabled();
 
     if (!serviceEnabled) {
@@ -180,10 +176,8 @@ class _DisasterMapState extends State<DisasterMap> {
       return;
     }
 
-    // Check current permission
     permission = await Geolocator.checkPermission();
 
-    // Request permission if denied
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
 
@@ -198,7 +192,6 @@ class _DisasterMapState extends State<DisasterMap> {
       }
     }
 
-    // Permanently denied
     if (permission == LocationPermission.deniedForever) {
       if (mounted) {
         setState(() {
@@ -226,8 +219,7 @@ class _DisasterMapState extends State<DisasterMap> {
     }
 
     try {
-      final Position position =
-      await Geolocator.getCurrentPosition(
+      final Position position = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
       );
 
@@ -243,9 +235,9 @@ class _DisasterMapState extends State<DisasterMap> {
       });
 
       _reloadCurrentLocationMarker();
+      _checkIfInsideAffectedZone();
 
-      // Move camera if map already exists
-      if (_mapController != null) {
+      if (widget.autoFollowLocation && _mapController != null) {
         await _mapController!.animateCamera(
           CameraUpdate.newLatLngZoom(
             currentPosition,
@@ -254,9 +246,7 @@ class _DisasterMapState extends State<DisasterMap> {
         );
       }
     } catch (e) {
-      debugPrint(
-        "Error getting current location: $e",
-      );
+      debugPrint("Error getting current location: $e");
     }
   }
 
@@ -289,63 +279,46 @@ class _DisasterMapState extends State<DisasterMap> {
   // Start Firestore Listeners
   //----------------------------------------------------------
 
-  // void _startFirestoreListeners() {
-  //   _listenAffectedZones();
-  //   _listenRescueTeams();
-  // }
-
-  //extra after delete
-
   void _startFirestoreListeners() {
-    _affectedZones = [
-      PolygonModel(
-        id: 'zone1',
-        type: 'Flood',
-        severity: 'High',
-        color: 'red',
-        coordinates: const [
-          LatLng(32.5865, 73.4918),
-          LatLng(32.5890, 73.4950),
-          LatLng(32.5850, 73.4980),
-          LatLng(32.5820, 73.4930),
-        ],
-        createdAt: DateTime.now(),
-      ),
-    ];
+    _listenAffectedZones();
 
-    setState(() {
-      _polygons = PolygonLayer.buildPolygons(_affectedZones);
-      _markers = {};
-      _isLoading = false;
-    });
+    if (widget.isAdmin) {
+      _listenRescueTeams();
+    } else {
+      setState(() {
+        _isLoading = false;
+      });
+    }
   }
+
   //----------------------------------------------------------
-  // Listen Affected Zones
+  // Listen Affected Zones / Task Zones
   //----------------------------------------------------------
 
   void _listenAffectedZones() {
     _polygonSubscription?.cancel();
 
-    _polygonSubscription =
-        _mapService.getAffectedZones().listen(
-              (zones) {
-            _affectedZones = zones;
+    final Stream<List<PolygonModel>> stream =
+        widget.zonesStream ?? _mapService.getAffectedZones();
 
-            final polygons =
-            PolygonLayer.buildPolygons(_affectedZones);
+    _polygonSubscription = stream.listen(
+          (zones) {
+        _affectedZones = zones;
 
-            if (!mounted) return;
+        final polygons = PolygonLayer.buildPolygons(_affectedZones);
 
-            setState(() {
-              _polygons = polygons;
-            });
-          },
-          onError: (error) {
-            debugPrint(
-              "Affected Zones Error: $error",
-            );
-          },
-        );
+        if (!mounted) return;
+
+        setState(() {
+          _polygons = polygons;
+        });
+
+        _checkIfInsideAffectedZone();
+      },
+      onError: (error) {
+        debugPrint("Zones Error: $error");
+      },
+    );
   }
 
   //----------------------------------------------------------
@@ -355,35 +328,32 @@ class _DisasterMapState extends State<DisasterMap> {
   void _listenRescueTeams() {
     _rescueSubscription?.cancel();
 
-    _rescueSubscription =
-        _mapService.getRescueTeams().listen(
-              (teams) {
-            _rescueTeams = teams;
+    _rescueSubscription = _mapService.getRescueTeams().listen(
+          (teams) {
+        _rescueTeams = teams;
 
-            final markers = MarkerLayer.buildMarkers(
-              rescueTeams: _rescueTeams,
-              currentLocation: _currentLocation,
-            );
-
-            if (!mounted) return;
-
-            setState(() {
-              _markers = markers;
-              _isLoading = false;
-            });
-          },
-          onError: (error) {
-            debugPrint(
-              "Rescue Teams Error: $error",
-            );
-
-            if (!mounted) return;
-
-            setState(() {
-              _isLoading = false;
-            });
-          },
+        final markers = MarkerLayer.buildMarkers(
+          rescueTeams: _rescueTeams,
+          currentLocation: _currentLocation,
         );
+
+        if (!mounted) return;
+
+        setState(() {
+          _markers = markers;
+          _isLoading = false;
+        });
+      },
+      onError: (error) {
+        debugPrint("Rescue Teams Error: $error");
+
+        if (!mounted) return;
+
+        setState(() {
+          _isLoading = false;
+        });
+      },
+    );
   }
 
   //----------------------------------------------------------
@@ -402,6 +372,102 @@ class _DisasterMapState extends State<DisasterMap> {
   }
 
   //----------------------------------------------------------
+  // Point-in-Polygon Check
+  //----------------------------------------------------------
+
+  bool _isPointInPolygon(LatLng point, List<LatLng> polygon) {
+    if (polygon.length < 3) return false;
+
+    bool isInside = false;
+    int j = polygon.length - 1;
+
+    for (int i = 0; i < polygon.length; i++) {
+      final bool intersects =
+          ((polygon[i].longitude > point.longitude) !=
+              (polygon[j].longitude > point.longitude)) &&
+              (point.latitude <
+                  (polygon[j].latitude - polygon[i].latitude) *
+                      (point.longitude - polygon[i].longitude) /
+                      (polygon[j].longitude - polygon[i].longitude) +
+                      polygon[i].latitude);
+
+      if (intersects) {
+        isInside = !isInside;
+      }
+
+      j = i;
+    }
+
+    return isInside;
+  }
+
+  //----------------------------------------------------------
+  // Check if current location is inside ANY affected zone
+  //----------------------------------------------------------
+
+  void _checkIfInsideAffectedZone() {
+    if (_currentLocation == null || _affectedZones.isEmpty) {
+      if (_currentAlertZone != null) {
+        setState(() => _currentAlertZone = null);
+      }
+      return;
+    }
+
+    PolygonModel? matchedZone;
+
+    for (final zone in _affectedZones) {
+      if (_isPointInPolygon(_currentLocation!, zone.coordinates)) {
+        matchedZone = zone;
+        break;
+      }
+    }
+
+    if (matchedZone?.id != _currentAlertZone?.id) {
+      setState(() {
+        _currentAlertZone = matchedZone;
+      });
+    }
+  }
+
+  //----------------------------------------------------------
+  // Safety tip text based on disaster type
+  //----------------------------------------------------------
+
+  String _safetyTipFor(String type) {
+    switch (type.toLowerCase()) {
+      case 'flood':
+        return 'Move to higher ground. Avoid flowing water.';
+      case 'earthquake':
+        return 'Stay away from buildings. Move to open ground.';
+      case 'heatwave':
+        return 'Stay hydrated. Avoid direct sun exposure.';
+      case 'storm':
+        return 'Stay indoors. Avoid windows and loose objects.';
+      default:
+        return 'Follow official instructions and stay alert.';
+    }
+  }
+
+  //----------------------------------------------------------
+  // Recommended action text for rescue teams
+  //----------------------------------------------------------
+
+  String _rescueActionFor(String type) {
+    switch (type.toLowerCase()) {
+      case 'flood':
+        return 'Prepare water rescue equipment and coordinate evacuation support.';
+      case 'earthquake':
+        return 'Prepare search & rescue teams and check structural hazards.';
+      case 'heatwave':
+        return 'Prepare medical support for heat-related emergencies.';
+      case 'storm':
+        return 'Prepare for wind damage response and power outage support.';
+      default:
+        return 'Coordinate with control room and stay on standby.';
+    }
+  }
+
+  //----------------------------------------------------------
   // Build UI
   //----------------------------------------------------------
 
@@ -409,40 +475,32 @@ class _DisasterMapState extends State<DisasterMap> {
   Widget build(BuildContext context) {
     return Stack(
       children: [
-
-        //------------------------------------------------------
-        // Google Map
-        //------------------------------------------------------
-
         GoogleMap(
-          initialCameraPosition: _initialCameraPosition,
-
+          initialCameraPosition: widget.initialCameraPosition ?? _initialCameraPosition,
           polygons: _polygons,
-
           markers: _markers,
-
           myLocationEnabled: _locationPermissionGranted,
-
           myLocationButtonEnabled: false,
-
           zoomControlsEnabled: false,
-
+          zoomGesturesEnabled: true,
+          scrollGesturesEnabled: true,
+          rotateGesturesEnabled: true,
+          tiltGesturesEnabled: true,
+          gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
+            Factory<OneSequenceGestureRecognizer>(
+                  () => EagerGestureRecognizer(),
+            ),
+          },
           compassEnabled: true,
-
           mapToolbarEnabled: true,
-
           buildingsEnabled: true,
-
           trafficEnabled: false,
-
           indoorViewEnabled: false,
-
           mapType: MapType.normal,
-
           onMapCreated: (GoogleMapController controller) {
             _mapController = controller;
 
-            if (_currentLocation != null) {
+            if (widget.autoFollowLocation && _currentLocation != null) {
               controller.animateCamera(
                 CameraUpdate.newLatLngZoom(
                   _currentLocation!,
@@ -451,34 +509,18 @@ class _DisasterMapState extends State<DisasterMap> {
               );
             }
           },
-
-          onCameraMove: (CameraPosition position) {
-            // Reserved for future:
-            // Admin monitoring
-            // Nearby rescue search
-            // Dynamic loading
-          },
-
+          onCameraMove: (CameraPosition position) {},
           onTap: (LatLng position) {
             debugPrint(
-              "Map tapped: "
-                  "${position.latitude}, "
-                  "${position.longitude}",
+              "Map tapped: ${position.latitude}, ${position.longitude}",
             );
           },
         ),
-        //------------------------------------------------------
-        // Loading Indicator
-        //------------------------------------------------------
 
         if (_isLoading)
           const Center(
             child: CircularProgressIndicator(),
           ),
-
-        //------------------------------------------------------
-        // Location Permission Warning
-        //------------------------------------------------------
 
         if (!_locationPermissionGranted)
           Positioned(
@@ -492,10 +534,7 @@ class _DisasterMapState extends State<DisasterMap> {
                 padding: EdgeInsets.all(12),
                 child: Row(
                   children: [
-                    Icon(
-                      Icons.location_off,
-                      color: Colors.orange,
-                    ),
+                    Icon(Icons.location_off, color: Colors.orange),
                     SizedBox(width: 10),
                     Expanded(
                       child: Text(
@@ -508,49 +547,89 @@ class _DisasterMapState extends State<DisasterMap> {
             ),
           ),
 
-        //------------------------------------------------------
-        // Floating Buttons
-        //------------------------------------------------------
-
-        Positioned(
-          right: 16,
-          bottom: 20,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-
-              //------------------------------------------------
-              // Current Location
-              //------------------------------------------------
-
-              FloatingActionButton(
-                heroTag: "current_location",
-
-                mini: true,
-
-                onPressed: _moveToCurrentLocation,
-
-                child: const Icon(Icons.my_location),
+        if (!widget.isAdmin && _currentAlertZone != null)
+          Positioned(
+            top: 20,
+            left: 20,
+            right: 20,
+            child: Card(
+              color: Colors.red.shade50,
+              elevation: 6,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(color: Colors.red.shade200),
               ),
-
-              const SizedBox(height: 12),
-
-              //------------------------------------------------
-              // Refresh Map
-              //------------------------------------------------
-
-              FloatingActionButton(
-                heroTag: "refresh_map",
-
-                mini: true,
-
-                onPressed: _refreshMap,
-
-                child: const Icon(Icons.refresh),
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.warning_rounded, color: Colors.red),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            widget.isRescueView
+                                ? "${_currentAlertZone!.severity.toUpperCase()} "
+                                "${_currentAlertZone!.type.toUpperCase()} REPORTED"
+                                : "${_currentAlertZone!.severity.toUpperCase()} "
+                                "${_currentAlertZone!.type.toUpperCase()} RISK",
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: Colors.red,
+                              fontSize: 15,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      widget.isRescueView
+                          ? "This zone has been reported as affected. Ensure your team is prepared to respond."
+                          : "You are currently inside an affected zone.",
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      widget.isRescueView
+                          ? "Recommended: ${_rescueActionFor(_currentAlertZone!.type)}"
+                          : "Safety tip: ${_safetyTipFor(_currentAlertZone!.type)}",
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ],
+            ),
           ),
-        ),
+
+        if (widget.showControls)
+          Positioned(
+            right: 16,
+            bottom: 20,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                FloatingActionButton(
+                  heroTag: "current_location",
+                  mini: true,
+                  onPressed: _moveToCurrentLocation,
+                  child: const Icon(Icons.my_location),
+                ),
+                const SizedBox(height: 12),
+                FloatingActionButton(
+                  heroTag: "refresh_map",
+                  mini: true,
+                  onPressed: _refreshMap,
+                  child: const Icon(Icons.refresh),
+                ),
+              ],
+            ),
+          ),
       ],
     );
   }

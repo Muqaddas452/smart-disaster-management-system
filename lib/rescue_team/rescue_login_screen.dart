@@ -75,19 +75,19 @@ class _RescueLoginScreenState extends State<RescueLoginScreen> {
 
       if (!authIndexDoc.exists || authIndexDoc.data()?['role'] != 'rescue_team') {
         // this account exists in Firebase Auth, but is NOT registered as rescue team
-        // (maybe it's a citizen account trying to log in here by mistake)
         await FirebaseAuth.instance.signOut(); // sign them back out immediately
         _showError('This account is not registered as a rescue team member.');
         return;
       }
 
-      // STEP 3: double check their approval status in "rescueTeamUsers"
+      // STEP 3: double check their approval status & fetch details in "rescueTeamUsers"
       final userDoc = await FirebaseFirestore.instance
           .collection('rescueTeamUsers')
           .doc(uid)
           .get();
 
-      final String status = userDoc.data()?['status'] ?? 'pending';
+      final userData = userDoc.data();
+      final String status = userData?['status'] ?? 'pending';
 
       if (status == 'pending') {
         // leader registered but admin hasn't approved the team yet
@@ -102,17 +102,28 @@ class _RescueLoginScreenState extends State<RescueLoginScreen> {
         return;
       }
 
-      // STEP 4: everything checks out, go to the Rescue Team Dashboard
+      // Fetch dynamic fields required by RescueTeamHomeScreen
+      final bool isLeader = userData?['isLeader'] ?? (userData?['role'] == 'leader');
+      final String teamId = userData?['teamId'] ?? '';
+      final String teamName = userData?['teamName'] ?? 'Rescue Team';
+
+      // STEP 4: navigate to Rescue Team Dashboard with dynamic params
       if (mounted) {
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(builder: (_) => const RescueTeamHomeScreen()),
+          MaterialPageRoute(
+            builder: (_) => RescueTeamHomeScreen(
+              isLeader: isLeader,
+              teamId: teamId,
+              teamName: teamName,
+            ),
+          ),
         );
       }
     } on FirebaseAuthException catch (e) {
       // Firebase gives specific error codes for login failures
       String message = 'Login failed. Please try again.';
-      if (e.code == 'user-not-found' || e.code == 'wrong-password') {
+      if (e.code == 'user-not-found' || e.code == 'wrong-password' || e.code == 'invalid-credential') {
         message = 'Incorrect email or password.';
       } else if (e.code == 'invalid-email') {
         message = 'Enter a valid email address.';
@@ -138,7 +149,6 @@ class _RescueLoginScreenState extends State<RescueLoginScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _screenBg, // light grey background, matches original design
-      // No AppBar / No Back Button — same as original, since this is an entry screen
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
@@ -163,14 +173,14 @@ class _RescueLoginScreenState extends State<RescueLoginScreen> {
                 width: 110,
                 height: 110,
                 decoration: BoxDecoration(
-                  color: _lightGreenBg, // light green circle behind the icon
+                  color: _lightGreenBg,
                   shape: BoxShape.circle,
                 ),
                 child: Center(
                   child: Icon(
                     Icons.shield,
                     size: 60,
-                    color: _primaryGreen.shade600, // matches the original bright green tone
+                    color: _primaryGreen.shade600,
                   ),
                 ),
               ),
@@ -201,7 +211,7 @@ class _RescueLoginScreenState extends State<RescueLoginScreen> {
 
               const SizedBox(height: 36),
 
-              // ── Email Field (CHANGED from Employee ID) ──
+              // ── Email Field ──
               Container(
                 decoration: BoxDecoration(
                   color: Colors.white,
@@ -209,7 +219,7 @@ class _RescueLoginScreenState extends State<RescueLoginScreen> {
                 ),
                 child: TextField(
                   controller: _emailController,
-                  keyboardType: TextInputType.emailAddress, // shows email-style keyboard
+                  keyboardType: TextInputType.emailAddress,
                   decoration: InputDecoration(
                     hintText: 'Enter your email',
                     hintStyle: TextStyle(color: Colors.grey[400], fontSize: 15),
@@ -233,7 +243,7 @@ class _RescueLoginScreenState extends State<RescueLoginScreen> {
                 ),
                 child: TextField(
                   controller: _passwordController,
-                  obscureText: !_passwordVisible, // hides text when true
+                  obscureText: !_passwordVisible,
                   decoration: InputDecoration(
                     hintText: 'Enter your password',
                     hintStyle: TextStyle(color: Colors.grey[400], fontSize: 15),
@@ -265,7 +275,7 @@ class _RescueLoginScreenState extends State<RescueLoginScreen> {
                 width: double.infinity,
                 height: 56,
                 child: ElevatedButton(
-                  onPressed: _isLoading ? null : _handleLogin, // disabled while loading
+                  onPressed: _isLoading ? null : _handleLogin,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: _primaryGreen.shade600,
                     shape: RoundedRectangleBorder(
@@ -288,7 +298,7 @@ class _RescueLoginScreenState extends State<RescueLoginScreen> {
 
               const SizedBox(height: 20),
 
-              // ── Forgot Password (CHANGED: now goes to real Forgot Password screen) ──
+              // ── Forgot Password ──
               GestureDetector(
                 onTap: () {
                   Navigator.push(
@@ -310,15 +320,13 @@ class _RescueLoginScreenState extends State<RescueLoginScreen> {
 
               const SizedBox(height: 32),
 
-              // ── Bottom Text (CHANGED: now links to real Join Team flow) ──
+              // ── Bottom Text ──
               GestureDetector(
                 onTap: () {
                   Navigator.push(
                     context,
                     MaterialPageRoute(
                       builder: (_) => const RescueRegistrationScreen(),
-                      // opens on "Register New Team" tab by default;
-                      // user can tap "Join Existing Team" tab from there
                     ),
                   );
                 },
