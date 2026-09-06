@@ -12,13 +12,13 @@ class NotificationSettingsCard extends StatefulWidget {
 
 class _NotificationSettingsCardState
     extends State<NotificationSettingsCard> {
-
   bool emailAlerts = true;
   bool smsAlerts = false;
   bool pushNotifications = true;
-  bool emergencyBroadcasts = true;
+  bool emergencyBroadcastAlerts = true;
 
   bool loading = true;
+  bool saving = false;
 
   @override
   void initState() {
@@ -27,84 +27,154 @@ class _NotificationSettingsCardState
   }
 
   Future<void> _loadSettings() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
 
-    final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        if (mounted) {
+          setState(() {
+            loading = false;
+          });
+        }
+        return;
+      }
 
-    if (user == null) return;
+      final doc = await FirebaseFirestore.instance
+          .collection("admins")
+          .doc(user.uid)
+          .get();
 
-    final doc = await FirebaseFirestore.instance
-        .collection("admins")
-        .doc(user.uid)
-        .get();
+      final data = doc.data();
 
-    final data = doc.data();
+      if (data != null) {
+        final notificationData = data["notificationSettings"];
 
-    if (data != null &&
-        data["notificationSettings"] != null) {
+        if (notificationData is Map<String, dynamic>) {
+          emailAlerts =
+              notificationData["emailAlerts"] ?? true;
 
-      final settings =
-      data["notificationSettings"]
-      as Map<String, dynamic>;
+          smsAlerts =
+              notificationData["smsAlerts"] ?? false;
 
-      emailAlerts =
-          settings["emailAlerts"] ?? true;
+          pushNotifications =
+              notificationData["pushNotifications"] ?? true;
 
-      smsAlerts =
-          settings["smsAlerts"] ?? false;
+          emergencyBroadcastAlerts =
+              notificationData["emergencyBroadcastAlerts"] ?? true;
+        }
+      }
 
-      pushNotifications =
-          settings["pushNotifications"] ?? true;
+      if (!mounted) return;
 
-      emergencyBroadcasts =
-          settings["emergencyBroadcasts"] ?? true;
-    }
-
-    if (mounted) {
       setState(() {
         loading = false;
       });
+    } catch (e) {
+      debugPrint(
+        "ERROR LOADING NOTIFICATION SETTINGS: $e",
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        loading = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.red,
+          content: Text(
+            "Unable to load notification settings.",
+          ),
+        ),
+      );
     }
   }
 
   Future<void> _saveSettings() async {
+    if (saving) return;
 
     final user = FirebaseAuth.instance.currentUser;
 
-    if (user == null) return;
+    if (user == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.red,
+          content: Text(
+            "No admin account is currently signed in.",
+          ),
+        ),
+      );
+      return;
+    }
 
-    await FirebaseFirestore.instance
-        .collection("admins")
-        .doc(user.uid)
-        .set({
-      "notificationSettings": {
-        "emailAlerts": emailAlerts,
-        "smsAlerts": smsAlerts,
-        "pushNotifications": pushNotifications,
-        "emergencyBroadcasts":
-        emergencyBroadcasts,
+    setState(() {
+      saving = true;
+    });
+
+    try {
+      await FirebaseFirestore.instance
+          .collection("admins")
+          .doc(user.uid)
+          .set(
+        {
+          "notificationSettings": {
+            "emailAlerts": emailAlerts,
+            "smsAlerts": smsAlerts,
+            "pushNotifications": pushNotifications,
+            "emergencyBroadcastAlerts":
+            emergencyBroadcastAlerts,
+          }
+        },
+        SetOptions(merge: true),
+      );
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.green,
+          content: Text(
+            "Notification settings saved successfully.",
+          ),
+        ),
+      );
+    } catch (e) {
+      debugPrint(
+        "ERROR SAVING NOTIFICATION SETTINGS: $e",
+      );
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: Colors.red,
+          content: Text(
+            "Unable to save notification settings.",
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          saving = false;
+        });
       }
-    }, SetOptions(merge: true));
-
-    if (!mounted) return;
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content:
-        Text("Notification settings saved."),
-      ),
-    );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-
     if (loading) {
-      return const Card(
-        child: Padding(
+      return Card(
+        elevation: 3,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(15),
+        ),
+        child: const Padding(
           padding: EdgeInsets.all(30),
           child: Center(
-            child:
-            CircularProgressIndicator(),
+            child: CircularProgressIndicator(),
           ),
         ),
       );
@@ -113,23 +183,18 @@ class _NotificationSettingsCardState
     return Card(
       elevation: 3,
       shape: RoundedRectangleBorder(
-        borderRadius:
-        BorderRadius.circular(15),
+        borderRadius: BorderRadius.circular(15),
       ),
       child: Padding(
-        padding:
-        const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(20),
         child: Column(
-          crossAxisAlignment:
-          CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-
             const Text(
               "Notification Settings",
               style: TextStyle(
                 fontSize: 20,
-                fontWeight:
-                FontWeight.bold,
+                fontWeight: FontWeight.bold,
               ),
             ),
 
@@ -138,18 +203,15 @@ class _NotificationSettingsCardState
             Text(
               "Manage how disaster alerts and system notifications are delivered.",
               style: TextStyle(
-                color:
-                Colors.grey.shade600,
+                color: Colors.grey.shade600,
               ),
             ),
 
             const SizedBox(height: 20),
 
             SwitchListTile(
-              secondary:
-              const CircleAvatar(
-                backgroundColor:
-                Color(0xFFE3F2FD),
+              secondary: const CircleAvatar(
+                backgroundColor: Color(0xFFE3F2FD),
                 child: Icon(
                   Icons.email_outlined,
                   color: Colors.blue,
@@ -158,11 +220,12 @@ class _NotificationSettingsCardState
               title: const Text(
                 "Email Alerts",
                 style: TextStyle(
-                    fontWeight:
-                    FontWeight.w600),
+                  fontWeight: FontWeight.w600,
+                ),
               ),
               subtitle: const Text(
-                  "Receive disaster notifications by email"),
+                "Receive disaster notifications by email",
+              ),
               value: emailAlerts,
               onChanged: (value) {
                 setState(() {
@@ -174,10 +237,8 @@ class _NotificationSettingsCardState
             const Divider(),
 
             SwitchListTile(
-              secondary:
-              const CircleAvatar(
-                backgroundColor:
-                Color(0xFFE8F5E9),
+              secondary: const CircleAvatar(
+                backgroundColor: Color(0xFFE8F5E9),
                 child: Icon(
                   Icons.sms_outlined,
                   color: Colors.green,
@@ -186,11 +247,12 @@ class _NotificationSettingsCardState
               title: const Text(
                 "SMS Alerts",
                 style: TextStyle(
-                    fontWeight:
-                    FontWeight.w600),
+                  fontWeight: FontWeight.w600,
+                ),
               ),
               subtitle: const Text(
-                  "Receive emergency alerts by SMS"),
+                "Receive emergency alerts by SMS",
+              ),
               value: smsAlerts,
               onChanged: (value) {
                 setState(() {
@@ -202,29 +264,26 @@ class _NotificationSettingsCardState
             const Divider(),
 
             SwitchListTile(
-              secondary:
-              const CircleAvatar(
-                backgroundColor:
-                Color(0xFFFFF3E0),
+              secondary: const CircleAvatar(
+                backgroundColor: Color(0xFFFFF3E0),
                 child: Icon(
                   Icons.notifications_active_outlined,
-                  color:
-                  Colors.orange,
+                  color: Colors.orange,
                 ),
               ),
               title: const Text(
                 "Push Notifications",
                 style: TextStyle(
-                    fontWeight:
-                    FontWeight.w600),
+                  fontWeight: FontWeight.w600,
+                ),
               ),
               subtitle: const Text(
-                  "Receive alerts on your device"),
+                "Receive alerts on your device",
+              ),
               value: pushNotifications,
               onChanged: (value) {
                 setState(() {
-                  pushNotifications =
-                      value;
+                  pushNotifications = value;
                 });
               },
             ),
@@ -232,10 +291,8 @@ class _NotificationSettingsCardState
             const Divider(),
 
             SwitchListTile(
-              secondary:
-              const CircleAvatar(
-                backgroundColor:
-                Color(0xFFFFEBEE),
+              secondary: const CircleAvatar(
+                backgroundColor: Color(0xFFFFEBEE),
                 child: Icon(
                   Icons.campaign_outlined,
                   color: Colors.red,
@@ -244,17 +301,16 @@ class _NotificationSettingsCardState
               title: const Text(
                 "Emergency Broadcast Alerts",
                 style: TextStyle(
-                    fontWeight:
-                    FontWeight.w600),
+                  fontWeight: FontWeight.w600,
+                ),
               ),
               subtitle: const Text(
-                  "Send high-priority disaster warnings"),
-              value:
-              emergencyBroadcasts,
+                "Send high-priority disaster warnings",
+              ),
+              value: emergencyBroadcastAlerts,
               onChanged: (value) {
                 setState(() {
-                  emergencyBroadcasts =
-                      value;
+                  emergencyBroadcastAlerts = value;
                 });
               },
             ),
@@ -262,16 +318,21 @@ class _NotificationSettingsCardState
             const SizedBox(height: 15),
 
             Align(
-              alignment:
-              Alignment.centerRight,
-              child:
-              ElevatedButton.icon(
-                onPressed:
-                _saveSettings,
-                icon: const Icon(
-                    Icons.save),
-                label: const Text(
-                    "Save Settings"),
+              alignment: Alignment.centerRight,
+              child: ElevatedButton.icon(
+                onPressed: saving ? null : _saveSettings,
+                icon: saving
+                    ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                  ),
+                )
+                    : const Icon(Icons.save),
+                label: Text(
+                  saving ? "Saving..." : "Save Settings",
+                ),
               ),
             ),
           ],

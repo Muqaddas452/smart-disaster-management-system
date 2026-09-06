@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../screen/admin_login_screen.dart';
+
 class AccountSettingsCard extends StatefulWidget {
   const AccountSettingsCard({super.key});
 
@@ -11,8 +12,7 @@ class AccountSettingsCard extends StatefulWidget {
       _AccountSettingsCardState();
 }
 
-class _AccountSettingsCardState
-    extends State<AccountSettingsCard> {
+class _AccountSettingsCardState extends State<AccountSettingsCard> {
   bool twoFactor = false;
   bool rememberLogin = true;
 
@@ -25,10 +25,6 @@ class _AccountSettingsCardState
     super.initState();
     _loadPreferences();
   }
-
-  // ============================================================
-  // LOAD SAVED SETTINGS
-  // ============================================================
 
   Future<void> _loadPreferences() async {
     try {
@@ -61,10 +57,6 @@ class _AccountSettingsCardState
     }
   }
 
-  // ============================================================
-  // SAVE TWO FACTOR PREFERENCE
-  // ============================================================
-
   Future<void> _updateTwoFactor(bool value) async {
     final user = FirebaseAuth.instance.currentUser;
 
@@ -77,12 +69,10 @@ class _AccountSettingsCardState
     }
 
     try {
-      // Update screen immediately
       setState(() {
         twoFactor = value;
       });
 
-      // Save 2FA setting in Firestore
       await FirebaseFirestore.instance
           .collection("admins")
           .doc(user.uid)
@@ -90,9 +80,14 @@ class _AccountSettingsCardState
         "twoFactorEnabled": value,
       });
 
-      // Also keep local setting
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool("admin_two_factor", value);
+
+      await prefs.setBool(
+        "admin_two_factor",
+        value,
+      );
+
+      if (!mounted) return;
 
       _showMessage(
         value
@@ -100,9 +95,15 @@ class _AccountSettingsCardState
             : "Two-Factor Authentication disabled",
       );
     } catch (e) {
+      if (!mounted) return;
+
       setState(() {
         twoFactor = !value;
       });
+
+      debugPrint(
+        "ERROR UPDATING TWO FACTOR: $e",
+      );
 
       _showMessage(
         "Could not update Two-Factor Authentication.",
@@ -110,9 +111,6 @@ class _AccountSettingsCardState
       );
     }
   }
-  // ============================================================
-  // SAVE REMEMBER LOGIN
-  // ============================================================
 
   Future<void> _updateRememberLogin(bool value) async {
     setState(() {
@@ -141,6 +139,10 @@ class _AccountSettingsCardState
         rememberLogin = !value;
       });
 
+      debugPrint(
+        "ERROR UPDATING REMEMBER LOGIN: $e",
+      );
+
       _showMessage(
         "Unable to save login preference.",
         isError: true,
@@ -148,16 +150,11 @@ class _AccountSettingsCardState
     }
   }
 
-  // ============================================================
-  // CHANGE PASSWORD
-  // ============================================================
-
   Future<void> _changePassword() async {
     if (_sendingResetEmail) return;
 
     final user = FirebaseAuth.instance.currentUser;
 
-    print("CURRENT ADMIN EMAIL: ${user?.email}");
     if (user == null) {
       _showMessage(
         "No admin account is currently signed in.",
@@ -176,7 +173,6 @@ class _AccountSettingsCardState
       return;
     }
 
-    // Confirm before sending the reset email.
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) {
@@ -185,7 +181,8 @@ class _AccountSettingsCardState
             "Change Password",
           ),
           content: Text(
-            "A password reset email will be sent to:\n\n$email\n\n"
+            "A password reset email will be sent to:\n\n"
+                "$email\n\n"
                 "Do you want to continue?",
           ),
           actions: [
@@ -243,7 +240,8 @@ class _AccountSettingsCardState
 
         default:
           message =
-              e.message ?? "Unable to send password reset email.";
+              e.message ??
+                  "Unable to send password reset email.";
       }
 
       _showMessage(
@@ -252,6 +250,10 @@ class _AccountSettingsCardState
       );
     } catch (e) {
       if (!mounted) return;
+
+      debugPrint(
+        "ERROR SENDING PASSWORD RESET: $e",
+      );
 
       _showMessage(
         "Something went wrong while sending the reset email.",
@@ -265,10 +267,6 @@ class _AccountSettingsCardState
       }
     }
   }
-
-  // ============================================================
-  // LOGOUT
-  // ============================================================
 
   Future<void> _logout() async {
     if (_loggingOut) return;
@@ -326,8 +324,13 @@ class _AccountSettingsCardState
     } on FirebaseAuthException catch (e) {
       if (!mounted) return;
 
-      print("LOGOUT ERROR CODE: ${e.code}");
-      print("LOGOUT ERROR MESSAGE: ${e.message}");
+      debugPrint(
+        "LOGOUT ERROR CODE: ${e.code}",
+      );
+
+      debugPrint(
+        "LOGOUT ERROR MESSAGE: ${e.message}",
+      );
 
       _showMessage(
         "Logout error: ${e.code}",
@@ -338,9 +341,11 @@ class _AccountSettingsCardState
         _loggingOut = false;
       });
     } catch (e) {
-      print("LOGOUT GENERAL ERROR: $e");
-
       if (!mounted) return;
+
+      debugPrint(
+        "LOGOUT GENERAL ERROR: $e",
+      );
 
       _showMessage(
         "Logout error: $e",
@@ -352,9 +357,6 @@ class _AccountSettingsCardState
       });
     }
   }
-  // ============================================================
-  // MESSAGE
-  // ============================================================
 
   void _showMessage(
       String message, {
@@ -370,10 +372,6 @@ class _AccountSettingsCardState
       ),
     );
   }
-
-  // ============================================================
-  // RESPONSIVE SETTING ROW
-  // ============================================================
 
   Widget _responsiveSetting({
     required Widget icon,
@@ -482,7 +480,6 @@ class _AccountSettingsCardState
       ),
       child: Padding(
         padding: const EdgeInsets.all(20),
-
         child: Column(
           crossAxisAlignment:
           CrossAxisAlignment.start,
@@ -506,9 +503,7 @@ class _AccountSettingsCardState
 
             const SizedBox(height: 20),
 
-            // ==================================================
             // CHANGE PASSWORD
-            // ==================================================
 
             _responsiveSetting(
               icon: const CircleAvatar(
@@ -519,12 +514,9 @@ class _AccountSettingsCardState
                   color: Colors.blue,
                 ),
               ),
-
               title: "Change Password",
-
               subtitle:
               "Send password reset email",
-
               action: ElevatedButton(
                 onPressed: _sendingResetEmail
                     ? null
@@ -544,9 +536,7 @@ class _AccountSettingsCardState
 
             const Divider(height: 30),
 
-            // ==================================================
-            // TWO FACTOR SECURITY
-            // ==================================================
+            // TWO FACTOR AUTHENTICATION
 
             _responsiveSetting(
               icon: const CircleAvatar(
@@ -557,13 +547,10 @@ class _AccountSettingsCardState
                   color: Colors.orange,
                 ),
               ),
-
               title:
               "Two-Factor Authentication",
-
               subtitle:
               "Security preference saved on this device",
-
               action: Switch(
                 value: twoFactor,
                 onChanged: _updateTwoFactor,
@@ -572,9 +559,7 @@ class _AccountSettingsCardState
 
             const Divider(height: 30),
 
-            // ==================================================
             // REMEMBER LOGIN
-            // ==================================================
 
             _responsiveSetting(
               icon: const CircleAvatar(
@@ -585,12 +570,9 @@ class _AccountSettingsCardState
                   color: Colors.green,
                 ),
               ),
-
               title: "Remember Login",
-
               subtitle:
               "Save your login preference on this device",
-
               action: Switch(
                 value: rememberLogin,
                 onChanged: _updateRememberLogin,
@@ -599,9 +581,7 @@ class _AccountSettingsCardState
 
             const Divider(height: 30),
 
-            // ==================================================
             // LOGOUT
-            // ==================================================
 
             _responsiveSetting(
               icon: const CircleAvatar(
@@ -612,21 +592,15 @@ class _AccountSettingsCardState
                   color: Colors.red,
                 ),
               ),
-
               title: "Logout",
-
               subtitle:
               "Sign out from this account",
-
               action: OutlinedButton(
-                style:
-                OutlinedButton.styleFrom(
+                style: OutlinedButton.styleFrom(
                   foregroundColor: Colors.red,
                 ),
-
                 onPressed:
                 _loggingOut ? null : _logout,
-
                 child: _loggingOut
                     ? const SizedBox(
                   width: 18,
