@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-
+import 'package:cloud_functions/cloud_functions.dart';
 import 'main_layout.dart';
+import '../admin/otp_verification_screen.dart';
 
 class AdminLoginScreen extends StatefulWidget {
   const AdminLoginScreen({super.key});
@@ -59,6 +60,59 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
         throw Exception("Admin account is disabled.");
       }
 
+      // Check Two-Factor Authentication
+      final twoFactorEnabled = data["twoFactorEnabled"] == true;
+
+      if (twoFactorEnabled) {
+        try {
+          final callable = FirebaseFunctions.instance.httpsCallable(
+            'sendAdminOtp',
+          );
+
+          await callable.call();
+
+          if (!mounted) return;
+
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (_) => OtpVerificationScreen(
+                email: credential.user!.email!,
+              ),
+            ),
+          );
+
+          return;
+        } on FirebaseFunctionsException catch (e) {
+          if (!mounted) return;
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                e.message ?? "Could not send OTP.",
+              ),
+            ),
+          );
+
+          await FirebaseAuth.instance.signOut();
+          return;
+        } catch (e) {
+          if (!mounted) return;
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                "Could not send OTP: $e",
+              ),
+            ),
+          );
+
+          await FirebaseAuth.instance.signOut();
+          return;
+        }
+      }
+
+      // If 2FA is disabled, go directly to dashboard
       if (!mounted) return;
 
       Navigator.pushReplacement(
@@ -97,7 +151,9 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(e.toString().replaceAll("Exception: ", "")),
+          content: Text(
+            e.toString().replaceAll("Exception: ", ""),
+          ),
         ),
       );
     }
@@ -127,9 +183,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                   size: 70,
                   color: Colors.green,
                 ),
-
                 const SizedBox(height: 20),
-
                 const Text(
                   "Admin Login",
                   style: TextStyle(
@@ -137,9 +191,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-
                 const SizedBox(height: 30),
-
                 TextField(
                   controller: _emailController,
                   decoration: const InputDecoration(
@@ -148,9 +200,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                     border: OutlineInputBorder(),
                   ),
                 ),
-
                 const SizedBox(height: 20),
-
                 TextField(
                   controller: _passwordController,
                   obscureText: _obscurePassword,
@@ -172,9 +222,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                     ),
                   ),
                 ),
-
                 const SizedBox(height: 30),
-
                 SizedBox(
                   width: double.infinity,
                   height: 50,
@@ -191,7 +239,6 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
               ],
             ),
           ),
-
         ),
       ),
     );

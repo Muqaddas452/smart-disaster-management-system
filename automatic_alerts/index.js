@@ -1,6 +1,8 @@
 const { onDocumentWritten } = require("firebase-functions/v2/firestore");
+const { onCall, HttpsError } = require("firebase-functions/v2/https");
 
 const { initializeApp } = require("firebase-admin/app");
+const { getAuth } = require("firebase-admin/auth");
 
 const {
   getFirestore,
@@ -8,6 +10,9 @@ const {
 } = require("firebase-admin/firestore");
 
 const { getMessaging } = require("firebase-admin/messaging");
+
+const crypto = require("crypto");
+const nodemailer = require("nodemailer");
 
 
 // ==========================================================
@@ -1115,3 +1120,272 @@ exports.createAffectedZone = onDocumentWritten(
     }
   }
 );
+/// ==========================================================
+ // PART 5
+ // ADMIN TWO-FACTOR AUTHENTICATION - SEND OTP
+ // ==========================================================
+
+ exports.sendAdminOtp = onCall(
+   {
+     secrets: ["OTP_EMAIL", "OTP_EMAIL_PASSWORD"],
+   },
+
+   async (request) => {
+
+     // --------------------------------------------------------
+     // 1. Check if user is logged in
+     // --------------------------------------------------------
+
+     if (!request.auth) {
+       throw new HttpsError(
+         "unauthenticated",
+         "You must be logged in."
+       );
+     }
+
+     const uid = request.auth.uid;
+
+     try {
+
+       // ------------------------------------------------------
+       // 2. Get admin document
+       // ------------------------------------------------------
+
+       const adminRef =
+         db.collection("admins").doc(uid);
+
+       const adminDoc =
+         await adminRef.get();
+
+       if (!adminDoc.exists) {
+         throw new HttpsError(
+           "permission-denied",
+           "Admin account not found."
+         );
+       }
+
+       const adminData =
+         adminDoc.data();
+
+       // ------------------------------------------------------
+       // 3. Check admin is active
+       // ------------------------------------------------------
+
+       if (adminData.active !== true) {
+         throw new HttpsError(
+           "permission-denied",
+           "Admin account is disabled."
+         );
+       }
+
+       // ------------------------------------------------------
+       // 4. Check 2FA is enabled
+       // ------------------------------------------------------
+
+       if (adminData.twoFactorEnabled !== true) {
+         throw new HttpsError(
+           "failed-precondition",
+           "Two-Factor Authentication is not enabled."
+         );
+       }
+
+       // ------------------------------------------------------
+       // 5. Get admin email
+       // ------------------------------------------------------
+
+       const adminUser =
+         await getAuth().getUser(uid);
+
+       const email =
+         adminUser.email;
+
+       if (!email) {
+         throw new HttpsError(
+           "failed-precondition",
+           "No email is associated with this admin account."
+         );
+       }
+
+       // ------------------------------------------------------
+       // 6. Generate 6-digit OTP
+       // ------------------------------------------------------
+
+       const otp =
+         crypto
+           .randomInt(100000, 1000000)
+           .toString();
+
+       // ------------------------------------------------------
+       // 7. Store OTP temporarily
+       // ------------------------------------------------------
+
+       await db
+         .collection("admin_2fa")
+         .doc(uid)
+         .set({
+
+           otp: otp,
+
+           email: email,
+
+           createdAt:
+             FieldValue.serverTimestamp(),
+
+           expiresAt:
+             new Date(
+               Date.now() + 5 * 60 * 1000
+             ),
+
+         });
+
+       // ------------------------------------------------------
+       // 8. Email configuration
+       // ------------------------------------------------------
+
+       const transporter =
+         nodemailer.createTransport({
+
+           service: "gmail",
+
+           auth: {
+
+             user:
+               process.env.OTP_EMAIL,
+
+             pass:
+               process.env.OTP_EMAIL_PASSWORD,
+
+           },
+
+         });
+
+       // ------------------------------------------------------
+       // 9. Send OTP email
+       // ------------------------------------------------------
+
+       await transporter.sendMail({
+
+         from:
+           process.env.OTP_EMAIL,
+
+         to:
+           email,
+
+         subject:
+           "Smart Disaster Management System - Admin OTP",
+
+         text:
+           `Your Smart Disaster Management System admin verification code is: ${otp}\n\n` +
+           `This code will expire in 5 minutes.\n\n` +
+           `If you did not try to log in, please ignore this email.`,
+
+       });
+
+       console.log(
+         `Admin OTP sent successfully to ${email}`
+       );
+
+       return {
+
+         success: true,
+
+         message:
+           "OTP sent successfully.",
+
+       };
+
+     } catch (error) {
+
+       console.error(
+         "Error sending admin OTP:",
+         error
+       );
+
+       if (error instanceof HttpsError) {
+         throw error;
+       }
+
+       throw new HttpsError(
+         "internal",
+         "Could not send OTP email."
+       );
+     }
+   }
+ );
+ exports.verifyAdminOtp = onCall(async (request) => {
+   try {
+     // Make sure the user is logged in
+     if (!request.auth) {
+       throw new HttpsError(
+         "unauthenticated",
+         "You must be logged in to verify OTP."
+       );
+     }
+
+     const uid = request.auth.uid;
+     const enteredOtp = String(request.data?.otp || "").trim();
+
+     // Check OTP format
+     if (!/^\d{6}$/.test(enteredOtp)) {
+       throw new HttpsError(
+         "invalid-argument",
+         "OTP must be a 6-digit number."
+       );
+     }
+
+     // Get stored OTP
+     const otpRef = db.collection("admin_2fa").doc(uid);
+     const otpSnap = await otpRef.get();
+
+     if (!otpSnap.exists) {
+       throw new HttpsError(
+         "not-found",
+         "OTP not found. Please request a new OTP."
+       );
+     }
+
+     const otpData = otpSnap.data();
+
+     // Check expiry
+     if (
+       otpData.expiresAt &&
+       otpData.expiresAt.toDate() < new Date()
+     ) {
+       await otpRef.delete();
+
+       throw new HttpsError(
+         "deadline-exceeded",
+         "OTP has expired. Please request a new OTP."
+       );
+     }
+
+     // Check OTP
+     if (otpData.otp !== enteredOtp) {
+       throw new HttpsError(
+         "permission-denied",
+         "Invalid OTP."
+       );
+     }
+
+     // OTP is correct — delete it so it cannot be reused
+     await otpRef.delete();
+
+     console.log(`Admin OTP verified successfully for UID: ${uid}`);
+
+     return {
+       success: true,
+       message: "OTP verified successfully.",
+     };
+   } catch (error) {
+     console.error("Error verifying admin OTP:", error);
+
+     if (error instanceof HttpsError) {
+       throw error;
+     }
+
+     throw new HttpsError(
+       "internal",
+       "OTP verification failed."
+     );
+   }
+ });

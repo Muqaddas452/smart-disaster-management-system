@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
+import '../screen/admin_login_screen.dart';
 class AccountSettingsCard extends StatefulWidget {
   const AccountSettingsCard({super.key});
 
@@ -65,39 +66,50 @@ class _AccountSettingsCardState
   // ============================================================
 
   Future<void> _updateTwoFactor(bool value) async {
-    setState(() {
-      twoFactor = value;
-    });
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      _showMessage(
+        "No admin account is currently signed in.",
+        isError: true,
+      );
+      return;
+    }
 
     try {
+      // Update screen immediately
+      setState(() {
+        twoFactor = value;
+      });
+
+      // Save 2FA setting in Firestore
+      await FirebaseFirestore.instance
+          .collection("admins")
+          .doc(user.uid)
+          .update({
+        "twoFactorEnabled": value,
+      });
+
+      // Also keep local setting
       final prefs = await SharedPreferences.getInstance();
-
-      await prefs.setBool(
-        'admin_two_factor',
-        value,
-      );
-
-      if (!mounted) return;
+      await prefs.setBool("admin_two_factor", value);
 
       _showMessage(
         value
-            ? "Two-factor security preference enabled."
-            : "Two-factor security preference disabled.",
+            ? "Two-Factor Authentication enabled"
+            : "Two-Factor Authentication disabled",
       );
     } catch (e) {
-      if (!mounted) return;
-
       setState(() {
         twoFactor = !value;
       });
 
       _showMessage(
-        "Unable to save security setting.",
+        "Could not update Two-Factor Authentication.",
         isError: true,
       );
     }
   }
-
   // ============================================================
   // SAVE REMEMBER LOGIN
   // ============================================================
@@ -145,6 +157,7 @@ class _AccountSettingsCardState
 
     final user = FirebaseAuth.instance.currentUser;
 
+    print("CURRENT ADMIN EMAIL: ${user?.email}");
     if (user == null) {
       _showMessage(
         "No admin account is currently signed in.",
@@ -303,16 +316,21 @@ class _AccountSettingsCardState
 
       if (!mounted) return;
 
-      Navigator.pushNamedAndRemoveUntil(
+      Navigator.pushAndRemoveUntil(
         context,
-        "/login",
+        MaterialPageRoute(
+          builder: (context) => const AdminLoginScreen(),
+        ),
             (route) => false,
       );
     } on FirebaseAuthException catch (e) {
       if (!mounted) return;
 
+      print("LOGOUT ERROR CODE: ${e.code}");
+      print("LOGOUT ERROR MESSAGE: ${e.message}");
+
       _showMessage(
-        e.message ?? "Unable to logout.",
+        "Logout error: ${e.code}",
         isError: true,
       );
 
@@ -320,10 +338,12 @@ class _AccountSettingsCardState
         _loggingOut = false;
       });
     } catch (e) {
+      print("LOGOUT GENERAL ERROR: $e");
+
       if (!mounted) return;
 
       _showMessage(
-        "Unable to logout. Please try again.",
+        "Logout error: $e",
         isError: true,
       );
 
@@ -332,7 +352,6 @@ class _AccountSettingsCardState
       });
     }
   }
-
   // ============================================================
   // MESSAGE
   // ============================================================
