@@ -67,13 +67,17 @@ class _RescueLoginScreenState extends State<RescueLoginScreen> {
 
       final String uid = userCredential.user!.uid; // this user's unique Firebase ID
 
-      // STEP 2: look up this uid in "authIndex" to confirm they are a rescue_team user
+      // STEP 2: look up this uid in "authIndex" to confirm they are a rescue team user or member
       final authIndexDoc = await FirebaseFirestore.instance
           .collection('authIndex')
           .doc(uid)
           .get();
 
-      if (!authIndexDoc.exists || authIndexDoc.data()?['role'] != 'rescue_team') {
+      final String? userRole = authIndexDoc.data()?['role'];
+
+      // UPDATED CONDITION: Allows rescue_member, rescue_leader, and rescue_team roles
+      if (!authIndexDoc.exists ||
+          (userRole != 'rescue_member' && userRole != 'rescue_leader' && userRole != 'rescue_team')) {
         // this account exists in Firebase Auth, but is NOT registered as rescue team
         await FirebaseAuth.instance.signOut(); // sign them back out immediately
         _showError('This account is not registered as a rescue team member.');

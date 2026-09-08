@@ -2,11 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'assign_members_screen.dart';
+import 'enroute_tracking_service.dart';
 
 // Shared Task Details screen for BOTH leader and member.
 // Buttons shown depend on (a) the signed-in user's role and (b) the task's
 // current status, so the whole dispatched -> accepted -> assigned ->
-// in_progress -> resolved lifecycle lives in this one screen.
+// enroute -> in_progress -> resolved lifecycle lives in this one screen.
 class ViewTaskScreen extends StatefulWidget {
   final String taskId;
   const ViewTaskScreen({super.key, required this.taskId});
@@ -60,9 +61,33 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
     }
   }
 
+  // NEW — member taps "Mark as Enroute": updates status AND starts live
+  // location tracking.
+  Future<void> _markEnroute() async {
+    setState(() => _busy = true);
+    try {
+      final started = await EnrouteTrackingService.instance.startTracking(widget.taskId);
+      if (!started) {
+        _showMessage('Cannot mark enroute without location permission');
+        return;
+      }
+      await _taskRef.update({
+        'status': 'enroute',
+        'enrouteBy': _uid,
+        'enrouteAt': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      _showMessage('Could not mark enroute: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  // UPDATED — now also called from "I've Arrived": stops tracking, then updates status
   Future<void> _startTask() async {
     setState(() => _busy = true);
     try {
+      await EnrouteTrackingService.instance.stopTracking();
       await _taskRef.update({
         'status': 'in_progress',
         'startedBy': _uid,
@@ -129,6 +154,10 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
           final String status = data['status'] ?? 'dispatched';
           final List assignedMembers = data['assignedMembers'] ?? [];
 
+          // Safety net: if the status has moved away from "enroute" but our
+          // service was still tracking this same task, stop it now.
+          EnrouteTrackingService.instance.stopIfTaskNoLongerEnroute(widget.taskId, status);
+
           final priorityColors = {
             'high': const [Color(0xFFFCEBEB), Color(0xFF791F1F)],
             'medium': const [Color(0xFFFAEEDA), Color(0xFF633806)],
@@ -138,6 +167,10 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
 
           final bool amAssignedMember =
               (data['assignedMemberIds'] as List?)?.contains(_uid) ?? false;
+
+          // NEW — live location, present while status is "enroute"
+          final Map<String, dynamic>? liveLocation =
+          data['liveLocation'] as Map<String, dynamic>?;
 
           return SingleChildScrollView(
             padding: const EdgeInsets.all(16),
@@ -209,6 +242,33 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
                   ),
                 ),
 
+                // NEW — while status is "enroute", show the responder's live location
+                if (status == 'enroute' && liveLocation != null) ...[
+                  const SizedBox(height: 16),
+                  const Text('LIVE LOCATION',
+                      style: TextStyle(
+                          fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black45, letterSpacing: 1)),
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                        color: Colors.green.shade50, borderRadius: BorderRadius.circular(10)),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.my_location, size: 18, color: kGreen),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Responder enroute — Lat: ${(liveLocation['lat'] as num?)?.toStringAsFixed(4)}, '
+                                'Lng: ${(liveLocation['lng'] as num?)?.toStringAsFixed(4)}',
+                            style: const TextStyle(fontSize: 13, color: Colors.black87),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+
                 if (assignedMembers.isNotEmpty) ...[
                   const SizedBox(height: 16),
                   const Text('ASSIGNED TEAM MEMBERS',
@@ -268,14 +328,17 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
           );
         });
       }
-      // assigned / in_progress / resolved -> leader just monitors, no action button
+      // assigned / enroute / in_progress / resolved -> leader just monitors
       return _statusNote(status);
     }
 
     // MEMBER actions (only if this member is actually assigned to the task)
     if (amAssignedMember) {
       if (status == 'assigned') {
-        return _primaryButton('Start task', Icons.play_arrow, _busy ? null : _startTask);
+        return _primaryButton('Mark as Enroute', Icons.directions_run, _busy ? null : _markEnroute);
+      }
+      if (status == 'enroute') {
+        return _primaryButton("I've Arrived – Start Task", Icons.play_arrow, _busy ? null : _startTask);
       }
       if (status == 'in_progress') {
         return _primaryButton('Mark completed', Icons.task_alt, _busy ? null : _markCompleted);
@@ -304,7 +367,8 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
 
   Widget _statusNote(String status) {
     final labels = {
-      'assigned': 'Waiting for the assigned member to start this task',
+      'assigned': 'Waiting for the assigned member to head out',
+      'enroute': 'Assigned member is enroute to the location',
       'in_progress': 'This task is currently in progress',
       'resolved': 'This task has been resolved',
     };

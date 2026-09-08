@@ -40,17 +40,17 @@ class RescuePersonalDetailsScreen extends StatelessWidget {
           final data = snapshot.data!.data() ?? {};
 
           // ── Leader's own details
-          final String name = data['name'] ?? '-';
+          final String name = data['name'] ?? data['fullName'] ?? '-';
           final String email = data['email'] ?? '-';
-          final String phone = data['phone'] ?? '-';
+          final String phone = data['phone'] ?? data['phoneNumber'] ?? '-';
           final String emergencyPhone = data['emergencyPhone'] ?? '-';
-          final String personalAddress = data['personalAddress'] ?? '-';
+          final String personalAddress = data['personalAddress'] ?? data['address'] ?? '-';
           final String bloodGroup = data['bloodGroup'] ?? '-';
           final String specialization = data['specialization'] ?? '-';
 
           // ── Team's details
-          final String teamName = data['teamName'] ?? '-';
-          final String teamId = data['teamId'] ?? '-';
+          final String rawTeamName = data['teamName'] ?? data['team_name'] ?? '';
+          final String teamId = data['teamId'] ?? data['team_id'] ?? '-';
           final String officialAddress = data['officialAddress'] ?? '-';
           final String role = data['role'] ?? 'rescue_leader';
           final String roleLabel =
@@ -62,91 +62,115 @@ class RescuePersonalDetailsScreen extends StatelessWidget {
             joinedDate = _formatDate(createdAt.toDate());
           }
 
-          final bool profileIncomplete =
-              name == '-' || phone == '-' || personalAddress == '-' || teamName == '-';
+          return FutureBuilder<String>(
+            future: _resolveTeamName(rawTeamName, teamId),
+            builder: (context, teamNameSnapshot) {
+              final String teamName = teamNameSnapshot.data ?? (rawTeamName.isNotEmpty ? rawTeamName : '-');
 
-          return SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (profileIncomplete)
-                  Container(
-                    margin: const EdgeInsets.only(bottom: 16),
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.amber.shade50,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: Colors.amber.shade200),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(Icons.info_outline, size: 18, color: Colors.amber.shade800),
-                        const SizedBox(width: 8),
-                        const Expanded(
-                          child: Text('Your profile is incomplete. Some details below are missing.',
-                              style: TextStyle(fontSize: 12, color: Colors.black87)),
+              final bool profileIncomplete =
+                  name == '-' || phone == '-' || personalAddress == '-' || teamName == '-';
+
+              return SingleChildScrollView(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (profileIncomplete)
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 16),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.amber.shade50,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Colors.amber.shade200),
                         ),
-                      ],
+                        child: Row(
+                          children: [
+                            Icon(Icons.info_outline, size: 18, color: Colors.amber.shade800),
+                            const SizedBox(width: 8),
+                            const Expanded(
+                              child: Text('Your profile is incomplete. Some details below are missing.',
+                                  style: TextStyle(fontSize: 12, color: Colors.black87)),
+                            ),
+                          ],
+                        ),
+                      ),
+                    const Center(
+                      child: CircleAvatar(
+                        radius: 44,
+                        backgroundColor: Color(0xFF2C3E50),
+                        child: Icon(Icons.person, size: 46, color: Colors.white54),
+                      ),
                     ),
-                  ),
-                const Center(
-                  child: CircleAvatar(
-                    radius: 44,
-                    backgroundColor: Color(0xFF2C3E50),
-                    child: Icon(Icons.person, size: 46, color: Colors.white54),
-                  ),
+                    const SizedBox(height: 24),
+
+                    // ── SECTION 1: LEADER'S OWN DETAILS
+                    _sectionLabel('YOUR DETAILS'),
+                    const SizedBox(height: 10),
+                    _tile(Icons.badge_outlined, 'FULL NAME', name),
+                    const SizedBox(height: 10),
+                    _tile(Icons.email_outlined, 'EMAIL', email, trailing: Icons.lock_outline),
+                    const SizedBox(height: 10),
+                    _tile(Icons.phone_outlined, 'PHONE NUMBER', phone),
+                    const SizedBox(height: 10),
+                    _tile(Icons.emergency_outlined, 'EMERGENCY CONTACT', emergencyPhone),
+                    const SizedBox(height: 10),
+                    _tile(Icons.home_outlined, 'PERSONAL ADDRESS', personalAddress),
+                    const SizedBox(height: 10),
+                    Row(children: [
+                      Expanded(
+                          child: _tile(Icons.star_outline, 'SPECIALIZATION', specialization,
+                              boldValue: true)),
+                      const SizedBox(width: 10),
+                      Expanded(
+                          child: _tile(Icons.bloodtype_outlined, 'BLOOD GROUP', bloodGroup,
+                              boldValue: true)),
+                    ]),
+
+                    const SizedBox(height: 26),
+
+                    // ── SECTION 2: TEAM'S DETAILS
+                    _sectionLabel('TEAM DETAILS'),
+                    const SizedBox(height: 10),
+                    _tile(Icons.group_outlined, 'TEAM NAME', teamName),
+                    const SizedBox(height: 10),
+                    _tile(Icons.business_outlined, 'OFFICIAL ADDRESS', officialAddress),
+                    const SizedBox(height: 10),
+                    Row(children: [
+                      Expanded(child: _tile(Icons.tag, 'TEAM ID', teamId, boldValue: true)),
+                      const SizedBox(width: 10),
+                      Expanded(
+                          child: _tile(Icons.calendar_today_outlined, 'JOINED DATE', joinedDate,
+                              boldValue: true)),
+                    ]),
+                    const SizedBox(height: 10),
+                    _tile(Icons.shield_outlined, 'ROLE', roleLabel, boldValue: true),
+                    const SizedBox(height: 20),
+                  ],
                 ),
-                const SizedBox(height: 24),
-
-                // ── SECTION 1: LEADER'S OWN DETAILS
-                _sectionLabel('YOUR DETAILS'),
-                const SizedBox(height: 10),
-                _tile(Icons.badge_outlined, 'FULL NAME', name),
-                const SizedBox(height: 10),
-                _tile(Icons.email_outlined, 'EMAIL', email, trailing: Icons.lock_outline),
-                const SizedBox(height: 10),
-                _tile(Icons.phone_outlined, 'PHONE NUMBER', phone),
-                const SizedBox(height: 10),
-                _tile(Icons.emergency_outlined, 'EMERGENCY CONTACT', emergencyPhone),
-                const SizedBox(height: 10),
-                _tile(Icons.home_outlined, 'PERSONAL ADDRESS', personalAddress),
-                const SizedBox(height: 10),
-                Row(children: [
-                  Expanded(
-                      child: _tile(Icons.star_outline, 'SPECIALIZATION', specialization,
-                          boldValue: true)),
-                  const SizedBox(width: 10),
-                  Expanded(
-                      child: _tile(Icons.bloodtype_outlined, 'BLOOD GROUP', bloodGroup,
-                          boldValue: true)),
-                ]),
-
-                const SizedBox(height: 26),
-
-                // ── SECTION 2: TEAM'S DETAILS (kept visually separate, same screen)
-                _sectionLabel('TEAM DETAILS'),
-                const SizedBox(height: 10),
-                _tile(Icons.group_outlined, 'TEAM NAME', teamName),
-                const SizedBox(height: 10),
-                _tile(Icons.business_outlined, 'OFFICIAL ADDRESS', officialAddress),
-                const SizedBox(height: 10),
-                Row(children: [
-                  Expanded(child: _tile(Icons.tag, 'TEAM ID', teamId, boldValue: true)),
-                  const SizedBox(width: 10),
-                  Expanded(
-                      child: _tile(Icons.calendar_today_outlined, 'JOINED DATE', joinedDate,
-                          boldValue: true)),
-                ]),
-                const SizedBox(height: 10),
-                _tile(Icons.shield_outlined, 'ROLE', roleLabel, boldValue: true),
-                const SizedBox(height: 20),
-              ],
-            ),
+              );
+            },
           );
         },
       ),
     );
+  }
+
+  // Resolve team name from Firestore teams collection if missing in user doc
+  static Future<String> _resolveTeamName(String userDocTeamName, String teamId) async {
+    if (userDocTeamName.trim().isNotEmpty && userDocTeamName != '-') {
+      return userDocTeamName;
+    }
+    if (teamId.isEmpty || teamId == '-') {
+      return '-';
+    }
+    try {
+      final teamDoc = await FirebaseFirestore.instance.collection('teams').doc(teamId).get();
+      if (teamDoc.exists && teamDoc.data() != null) {
+        return teamDoc.data()!['teamName'] ?? teamDoc.data()!['name'] ?? '-';
+      }
+    } catch (_) {}
+    return '-';
   }
 
   static String _formatDate(DateTime dt) {
