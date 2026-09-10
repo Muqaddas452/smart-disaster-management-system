@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'rescue_registration_screen.dart';
 import 'member_verification_screen.dart';
+import 'rescue_login_screen.dart';
 
 class RescueRoleSelectionScreen extends StatelessWidget {
   const RescueRoleSelectionScreen({super.key});
@@ -99,6 +100,38 @@ class RescueRoleSelectionScreen extends StatelessWidget {
                         ),
                       );
                     },
+                  ),
+                  const SizedBox(height: 20),
+
+                  // Already-registered users need a way back to login —
+                  // RescueLoginScreen existed in code but had no entry point.
+                  Center(
+                    child: TextButton(
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const RescueLoginScreen(),
+                          ),
+                        );
+                      },
+                      child: RichText(
+                        text: TextSpan(
+                          style: const TextStyle(fontSize: 14, color: Colors.black54),
+                          children: [
+                            const TextSpan(text: 'Already registered? '),
+                            TextSpan(
+                              text: 'Login here',
+                              style: TextStyle(
+                                color: primaryGreen,
+                                fontWeight: FontWeight.w700,
+                                decoration: TextDecoration.underline,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                   ),
                 ],
               ),

@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart'; // Flutter's core UI toolkit
 import 'package:firebase_auth/firebase_auth.dart'; // to get the currently logged-in user
 import 'package:cloud_firestore/cloud_firestore.dart'; // to read the team's status from Firestore
-import '../citizen_screens/login_screen.dart'; // Login screen lives in lib/ (one folder up from rescue_team/)
+import 'rescue_login_screen.dart'; // FIXED: was pointing to the citizen LoginScreen, which doesn't
+// know how to handle 'rescue_leader'/'rescue_member' roles (see auth_service.dart) — an approved
+// leader tapping "Check Status" needs to land on the Rescue Team login, not the citizen one.
 
 class PendingApprovalScreen extends StatefulWidget {
   // Stateful because we need to show a loading spinner while checking status
@@ -45,18 +47,47 @@ class _PendingApprovalScreenState extends State<PendingApprovalScreen> {
         return;
       }
 
-      final String status = docSnapshot.data()?['status'] ?? 'pending';
+      String status = docSnapshot.data()?['status'] ?? 'pending';
       // read the "status" field, default to 'pending' if it's missing for some reason
 
+      // FIXED: approval status was previously ONLY read from
+      // rescueTeamUsers/{uid}.status. If whatever approves teams updates the
+      // team-level rescueTeams/{teamId}.status instead (which is the natural
+      // place an admin reviews a "team"), rescueTeamUsers/{uid}.status is
+      // left stuck on 'pending' forever even though the team really is
+      // approved. So if the user-level doc isn't showing approved yet, we
+      // also cross-check the team-level doc as the source of truth.
+      if (status != 'approved') {
+        final String teamId = docSnapshot.data()?['teamId'] ?? '';
+        if (teamId.isNotEmpty) {
+          final teamDoc = await FirebaseFirestore.instance
+              .collection('rescueTeams')
+              .doc(teamId)
+              .get();
+          final String teamStatus = teamDoc.data()?['status'] ?? status;
+          if (teamStatus == 'approved') {
+            // sync it back onto the user doc so future reads (login, etc.)
+            // see the correct status without needing this cross-check again
+            await FirebaseFirestore.instance
+                .collection('rescueTeamUsers')
+                .doc(currentUser.uid)
+                .update({'status': 'approved'});
+            status = 'approved';
+          } else if (teamStatus == 'rejected') {
+            status = 'rejected';
+          }
+        }
+      }
+
       if (status == 'approved') {
-        // admin has approved! send the leader to Login so they can sign in properly
+        // admin has approved! send the leader to Rescue Team Login so they can sign in properly
         _showMessage('Your team has been approved! Please log in.');
 
         if (mounted) {
           Navigator.pushAndRemoveUntil(
             // pushAndRemoveUntil clears all previous screens, so back button won't return here
             context,
-            MaterialPageRoute(builder: (context) => const LoginScreen()),
+            MaterialPageRoute(builder: (context) => const RescueLoginScreen()),
                 (route) => false, // false means remove ALL previous routes
           );
         }

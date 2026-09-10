@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart'; // import Flutter's basic UI toolkit
-import '/../../citizen_screens/signupscreen.dart'; // import the Sign Up screen file
-import 'citizen_screens/login_screen.dart'; // import the Login screen file
+import '/citizen_screens/signupscreen.dart'; // import the Sign Up screen file
+import '/citizen_screens/login_screen.dart'; // import the Login screen file
 import 'rescue_team/rescue_role_selection_screen.dart'; // import the Rescue Role Selection screen file
 
 class WelcomeScreen extends StatelessWidget {

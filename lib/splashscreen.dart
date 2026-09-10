@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart'; // authIndex/citizens se role aur profile status check krne k liye
 import 'package:firebase_auth/firebase_auth.dart'; // current logged-in user check krne k liye
 import 'welcomescreen.dart';
-import 'citizen_screens/citizen_home_screen.dart';
-import 'citizen_screens/profile_completion_screen.dart';
+import '/citizen_screens/citizen_home_screen.dart';
+import '/citizen_screens/profile_completion_screen.dart';
 import 'rescue_team/rescue_home_screen.dart';
 
 class SplashScreen extends StatefulWidget {

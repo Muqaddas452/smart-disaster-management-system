@@ -1,6 +1,9 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:image_picker/image_picker.dart';
 
 class RescueMemberEditProfileScreen extends StatefulWidget {
   const RescueMemberEditProfileScreen({super.key});
@@ -26,6 +29,11 @@ class _RescueMemberEditProfileScreenState
 
   bool _isLoading = true;
   bool _isSaving = false;
+
+  // ---- Profile picture state ----
+  File? _pickedImageFile;
+  String? _photoUrl;
+  bool _isUploadingPhoto = false;
 
   @override
   void initState() {
@@ -64,6 +72,7 @@ class _RescueMemberEditProfileScreenState
           _personalAddressController.text = data['personalAddress'] ?? data['address'] ?? '';
           _officialAddressController.text = data['officialAddress'] ?? '';
           _specializationController.text = data['specialization'] ?? '';
+          _photoUrl = data['photoUrl'];
           _isLoading = false;
         });
       } else {
@@ -72,6 +81,94 @@ class _RescueMemberEditProfileScreenState
     } catch (e) {
       setState(() => _isLoading = false);
       _showSnackBar('Error loading profile data: $e', isError: true);
+    }
+  }
+
+  // ---- Pick image from gallery or camera ----
+  Future<void> _pickImage(ImageSource source) async {
+    try {
+      final picker = ImagePicker();
+      final XFile? picked = await picker.pickImage(
+        source: source,
+        maxWidth: 800,
+        maxHeight: 800,
+        imageQuality: 80,
+      );
+
+      if (picked != null) {
+        setState(() {
+          _pickedImageFile = File(picked.path);
+        });
+        await _uploadProfilePicture();
+      }
+    } catch (e) {
+      _showSnackBar('Could not pick image: $e', isError: true);
+    }
+  }
+
+  void _showImageSourceSheet() {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: Wrap(
+            children: [
+              ListTile(
+                leading: const Icon(Icons.photo_library, color: kGreen),
+                title: const Text('Choose from Gallery'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickImage(ImageSource.gallery);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.camera_alt, color: kGreen),
+                title: const Text('Take a Photo'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickImage(ImageSource.camera);
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // ---- Upload picked image to Firebase Storage & save URL to Firestore ----
+  Future<void> _uploadProfilePicture() async {
+    final String? uid = FirebaseAuth.instance.currentUser?.uid;
+    if (_pickedImageFile == null || uid == null) return;
+
+    setState(() => _isUploadingPhoto = true);
+
+    try {
+      final ref = FirebaseStorage.instance
+          .ref()
+          .child('rescue_profile_pictures')
+          .child('$uid.jpg');
+
+      await ref.putFile(_pickedImageFile!);
+      final downloadUrl = await ref.getDownloadURL();
+
+      await FirebaseFirestore.instance.collection('rescueTeamUsers').doc(uid).update({
+        'photoUrl': downloadUrl,
+      });
+
+      if (mounted) {
+        setState(() {
+          _photoUrl = downloadUrl;
+          _pickedImageFile = null;
+        });
+        _showSnackBar('Profile picture updated!');
+      }
+    } on FirebaseException catch (e) {
+      _showSnackBar(e.message ?? 'Failed to upload picture.', isError: true);
+    } catch (e) {
+      _showSnackBar('Failed to upload picture: $e', isError: true);
+    } finally {
+      if (mounted) setState(() => _isUploadingPhoto = false);
     }
   }
 
@@ -148,38 +245,52 @@ class _RescueMemberEditProfileScreenState
             children: [
               // ── Profile Photo with Camera Icon
               Center(
-                child: Stack(
-                  children: [
-                    Container(
-                      width: 110,
-                      height: 110,
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade300,
-                        shape: BoxShape.circle,
+                child: GestureDetector(
+                  onTap: _isUploadingPhoto ? null : _showImageSourceSheet,
+                  child: Stack(
+                    children: [
+                      Container(
+                        width: 110,
+                        height: 110,
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade300,
+                          shape: BoxShape.circle,
+                          image: _pickedImageFile != null
+                              ? DecorationImage(image: FileImage(_pickedImageFile!), fit: BoxFit.cover)
+                              : (_photoUrl != null
+                              ? DecorationImage(image: NetworkImage(_photoUrl!), fit: BoxFit.cover)
+                              : null),
+                        ),
+                        child: (_pickedImageFile == null && _photoUrl == null)
+                            ? const Icon(
+                          Icons.person,
+                          size: 65,
+                          color: Colors.grey,
+                        )
+                            : null,
                       ),
-                      child: const Icon(
-                        Icons.person,
-                        size: 65,
-                        color: Colors.grey,
-                      ),
-                    ),
-                    Positioned(
-                      bottom: 2,
-                      right: 2,
-                      child: CircleAvatar(
-                        radius: 18,
-                        backgroundColor: kGreen,
-                        child: IconButton(
-                          padding: EdgeInsets.zero,
-                          icon: const Icon(Icons.camera_alt,
+                      if (_isUploadingPhoto)
+                        const Positioned.fill(
+                          child: CircleAvatar(
+                            backgroundColor: Colors.black45,
+                            child: SizedBox(
+                              height: 24, width: 24,
+                              child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5),
+                            ),
+                          ),
+                        ),
+                      Positioned(
+                        bottom: 2,
+                        right: 2,
+                        child: CircleAvatar(
+                          radius: 18,
+                          backgroundColor: kGreen,
+                          child: const Icon(Icons.camera_alt,
                               size: 18, color: Colors.white),
-                          onPressed: () {
-                            _showSnackBar('Photo upload option coming soon');
-                          },
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
               const SizedBox(height: 28),

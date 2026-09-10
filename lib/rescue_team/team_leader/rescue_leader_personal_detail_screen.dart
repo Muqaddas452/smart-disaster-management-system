@@ -165,7 +165,7 @@ class RescuePersonalDetailsScreen extends StatelessWidget {
       return '-';
     }
     try {
-      final teamDoc = await FirebaseFirestore.instance.collection('teams').doc(teamId).get();
+      final teamDoc = await FirebaseFirestore.instance.collection('rescueTeams').doc(teamId).get();
       if (teamDoc.exists && teamDoc.data() != null) {
         return teamDoc.data()!['teamName'] ?? teamDoc.data()!['name'] ?? '-';
       }

@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'editprofilescreen.dart';
+import '../team_member/rescue_member_edit_profile_screen.dart';
 import 'rescue_leader_notification_preferences_screen.dart';
 
 class RescueSettingsScreen extends StatelessWidget {
-  const RescueSettingsScreen({super.key});
+  final bool isLeader;
+
+  const RescueSettingsScreen({super.key, this.isLeader = true});
 
   static const Color kGreen = Color(0xFF1B5E38);
 
@@ -32,7 +35,13 @@ class RescueSettingsScreen extends StatelessWidget {
               subtitle: 'Update your name, contact & address',
               onTap: () => Navigator.push(
                 context,
-                MaterialPageRoute(builder: (_) => const EditProfileScreen()),
+                MaterialPageRoute(
+                  // Leader and member each have their own edit-profile screen
+                  // (previously both were incorrectly sent to the leader's screen).
+                  builder: (_) => isLeader
+                      ? const EditProfileScreen()
+                      : const RescueMemberEditProfileScreen(),
+                ),
               ),
             ),
             const SizedBox(height: 12),

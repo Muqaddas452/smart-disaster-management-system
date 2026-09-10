@@ -1,9 +1,15 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 
-// Ye service FCM token generate karke Firestore ke 'citizens' collection
-// mein save karta hai. Isse Admin Panel har citizen ko individually
-// (ya area-wise) notification bhej sakega.
+// Ye service FCM token generate karke Firestore mein save karta hai. Isse
+// Admin Panel har user ko individually (ya area-wise) notification bhej
+// sakega.
+//
+// UPDATED: pehle ye hamesha 'citizens' collection mein hardcoded save karta
+// tha, is liye rescue team leader/member ka FCM token kabhi save hi nahi ho
+// raha tha (sirf citizen users ke liye kaam karta tha). Ab collection
+// parameterized hai — citizen ke liye 'citizens' pass karo, rescue team
+// leader/member ke liye 'rescueTeamUsers' pass karo, waghera.
 class FcmTokenService {
   // Firestore aur FCM ke instances — dono baar baar use honge is class mein
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -11,7 +17,12 @@ class FcmTokenService {
 
   // Ye function login/signup ke turant baad call hota hai.
   // uid = current logged-in user ka Firebase Auth UID
-  static Future<void> saveFCMToken(String uid) async {
+  // collection = kis collection mein token save karna hai (default 'citizens'
+  // rakha hai taake purane call sites bina change kiye kaam karte rahein)
+  static Future<void> saveFCMToken(
+      String uid, {
+        String collection = 'citizens',
+      }) async {
     try {
       // Device ka current FCM token generate karo
       final String? token = await _messaging.getToken();
@@ -23,17 +34,17 @@ class FcmTokenService {
         return;
       }
 
-      // Firestore ke 'citizens' collection mein uid wali document mein token daalo.
+      // Firestore ke diye gaye collection mein uid wali document mein token daalo.
       // set() with merge:true isliye use kiya hai taake:
       // - agar document abhi naya bana hi hai (signup ke waqt), error na aaye
       // - agar document pehle se exist karta hai, sirf fcmToken field update ho,
       //   baaki fields (name, email, phone) safe rahen
-      await _firestore.collection('citizens').doc(uid).set(
+      await _firestore.collection(collection).doc(uid).set(
         {'fcmToken': token},
         SetOptions(merge: true),
       );
 
-      print('[FCM] Token save ho gaya citizens/$uid ke liye.');
+      print('[FCM] Token save ho gaya $collection/$uid ke liye.');
     } catch (e) {
       // Agar kuch bhi fail ho (network, permission etc) to app crash na ho,
       // sirf error print ho jaye — login/signup flow rukna nahi chahiye
@@ -48,14 +59,14 @@ class FcmTokenService {
   //
   // Isko app start hone par call karo (main.dart mein), sirf agar user
   // already logged in ho.
-  static void listenForTokenRefresh(String uid) {
+  static void listenForTokenRefresh(String uid, {String collection = 'citizens'}) {
     _messaging.onTokenRefresh.listen((String newToken) async {
       try {
-        await _firestore.collection('citizens').doc(uid).set(
+        await _firestore.collection(collection).doc(uid).set(
           {'fcmToken': newToken},
           SetOptions(merge: true),
         );
-        print('[FCM] Refreshed token save ho gaya citizens/$uid ke liye.');
+        print('[FCM] Refreshed token save ho gaya $collection/$uid ke liye.');
       } catch (e) {
         print('[FCM] Token refresh save karte waqt error: $e');
       }

@@ -68,6 +68,7 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
         'email': email,
         'inviteCode': code,
         'teamId': widget.teamId,
+        'teamName': widget.teamName,
         'status': 'pending',
         'invitedBy': FirebaseAuth.instance.currentUser?.uid,
         'createdAt': FieldValue.serverTimestamp(),

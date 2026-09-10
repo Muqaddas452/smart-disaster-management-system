@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart'; // to check the user's ro
 import 'rescue_home_screen.dart'; // Rescue Team Dashboard, shown after successful login
 import 'rescue_registration_screen.dart'; // used for "New member? Join here" link
 import '../citizen_screens/forgotpassword.dart'; // shared Forgot Password screen, one folder up in lib/
+import '../Services/fcm_token_service.dart'; // NEW — save FCM token for leader/member too, same as citizen users
 
 class RescueLoginScreen extends StatefulWidget {
   const RescueLoginScreen({super.key});
@@ -91,7 +92,39 @@ class _RescueLoginScreenState extends State<RescueLoginScreen> {
           .get();
 
       final userData = userDoc.data();
-      final String status = userData?['status'] ?? 'pending';
+      String status = userData?['status'] ?? 'pending';
+      final bool loggingInAsLeader = userData?['isLeader'] ?? (userData?['role'] == 'rescue_leader');
+
+      // FIXED: this used to ONLY look at rescueTeamUsers/{uid}.status. But
+      // that field can get out of sync with the actual approval — if
+      // whatever approves teams updates rescueTeams/{teamId}.status instead
+      // (the team-level record), rescueTeamUsers/{uid}.status is left stuck
+      // on 'pending' forever, so a leader whose team really IS approved
+      // keeps seeing "still awaiting admin approval". So if the user-level
+      // doc isn't showing approved, cross-check the team-level doc too.
+      // (Only applies to leaders — members are auto-approved with
+      // status:'active' at registration and don't need this gate.)
+      if (loggingInAsLeader && status != 'approved') {
+        final String crossCheckTeamId = userData?['teamId'] ?? '';
+        if (crossCheckTeamId.isNotEmpty) {
+          final teamDoc = await FirebaseFirestore.instance
+              .collection('rescueTeams')
+              .doc(crossCheckTeamId)
+              .get();
+          final String teamStatus = teamDoc.data()?['status'] ?? status;
+          if (teamStatus == 'approved') {
+            // sync it back onto the user doc so future logins don't need
+            // this cross-check again
+            await FirebaseFirestore.instance
+                .collection('rescueTeamUsers')
+                .doc(uid)
+                .update({'status': 'approved'});
+            status = 'approved';
+          } else if (teamStatus == 'rejected') {
+            status = 'rejected';
+          }
+        }
+      }
 
       if (status == 'pending') {
         // leader registered but admin hasn't approved the team yet
@@ -107,9 +140,15 @@ class _RescueLoginScreenState extends State<RescueLoginScreen> {
       }
 
       // Fetch dynamic fields required by RescueTeamHomeScreen
-      final bool isLeader = userData?['isLeader'] ?? (userData?['role'] == 'leader');
+      final bool isLeader = loggingInAsLeader;
       final String teamId = userData?['teamId'] ?? '';
       final String teamName = userData?['teamName'] ?? 'Rescue Team';
+
+      // NEW — save this device's FCM token into rescueTeamUsers/{uid}, exactly
+      // like it's done for citizen users into citizens/{uid}. Without this the
+      // leader (and members) never receive push notifications since their
+      // token was never being saved anywhere.
+      await FcmTokenService.saveFCMToken(uid, collection: 'rescueTeamUsers');
 
       // STEP 4: navigate to Rescue Team Dashboard with dynamic params
       if (mounted) {

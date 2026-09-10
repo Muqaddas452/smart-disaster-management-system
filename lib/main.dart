@@ -201,7 +201,8 @@ class AuthWrapper extends StatelessWidget {
           );
         }
 
-        return const LoginScreen();
+        // FIXED: Replaced LoginScreen() with WelcomeScreen()
+        return const WelcomeScreen();
       },
     );
   }

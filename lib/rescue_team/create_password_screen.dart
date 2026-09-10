@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart'; // Flutter's core UI toolkit
 import 'package:firebase_auth/firebase_auth.dart'; // to create the Firebase Auth account
 import 'package:cloud_firestore/cloud_firestore.dart'; // to save/update Firestore documents
-import '../citizen_screens/login_screen.dart'; // Login screen is in lib/, one folder up from rescue_team/
+import '/citizen_screens/login_screen.dart'; // Login screen is in lib/, one folder up from rescue_team/
 
 class CreatePasswordScreen extends StatefulWidget {
   // this screen needs 3 pieces of data passed in from the previous screen

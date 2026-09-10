@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'rescue_member_personal_detail_screen.dart';
-import '../team_leader//rescue_leader_settings_screen.dart';
+import '../team_leader/rescue_leader_settings_screen.dart';
 import '../team_leader/rescue_leader_notification_preferences_screen.dart';
 import '/citizen_screens/feedback_screen.dart';
 import '/citizen_screens/feedback_success_screen.dart';
@@ -38,10 +38,11 @@ class ViewMemberProfileScreen extends StatelessWidget {
                     ? data['name']
                     : 'Rescue Member';
                 final String email = data['email'] ?? FirebaseAuth.instance.currentUser?.email ?? '';
+                final String? photoUrl = data['photoUrl'];
 
                 return CustomScrollView(
                   slivers: [
-                    SliverToBoxAdapter(child: _header(name, email)),
+                    SliverToBoxAdapter(child: _header(name, email, photoUrl)),
                     SliverToBoxAdapter(
                       child: Padding(
                         padding: const EdgeInsets.fromLTRB(16, 24, 16, 16),
@@ -66,7 +67,7 @@ class ViewMemberProfileScreen extends StatelessWidget {
                               subtitle: 'Edit profile & notification preferences',
                               onTap: () => Navigator.push(
                                 context,
-                                MaterialPageRoute(builder: (_) => const RescueSettingsScreen()),
+                                MaterialPageRoute(builder: (_) => const RescueSettingsScreen(isLeader: false)),
                               ),
                             ),
                             const SizedBox(height: 12),
@@ -98,14 +99,13 @@ class ViewMemberProfileScreen extends StatelessWidget {
               },
             ),
           ),
-          _bottomNav(context),
         ],
       ),
     );
   }
 
   // ── HEADER (avatar + name + email, rounded green card)
-  Widget _header(String name, String email) {
+  Widget _header(String name, String email, String? photoUrl) {
     return Container(
       width: double.infinity,
       decoration: const BoxDecoration(
@@ -121,10 +121,15 @@ class ViewMemberProfileScreen extends StatelessWidget {
           padding: const EdgeInsets.symmetric(vertical: 28),
           child: Column(
             children: [
-              const CircleAvatar(
+              CircleAvatar(
                 radius: 44,
                 backgroundColor: Colors.white24,
-                child: Icon(Icons.person, size: 50, color: Colors.white),
+                backgroundImage: (photoUrl != null && photoUrl.isNotEmpty)
+                    ? NetworkImage(photoUrl)
+                    : null,
+                child: (photoUrl == null || photoUrl.isEmpty)
+                    ? const Icon(Icons.person, size: 50, color: Colors.white)
+                    : null,
               ),
               const SizedBox(height: 14),
               Text(
@@ -228,64 +233,5 @@ class ViewMemberProfileScreen extends StatelessWidget {
         Navigator.of(context).popUntil((route) => route.isFirst);
       }
     }
-  }
-
-  // ── BOTTOM NAV
-  Widget _bottomNav(BuildContext context) {
-    const items = [
-      {'icon': Icons.home_rounded, 'label': 'Home'},
-      {'icon': Icons.assignment_outlined, 'label': 'Tasks'},
-      {'icon': Icons.map_outlined, 'label': 'Map'},
-      {'icon': Icons.person, 'label': 'Profile'},
-    ];
-
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.08),
-            blurRadius: 10,
-            offset: const Offset(0, -2),
-          )
-        ],
-      ),
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: List.generate(items.length, (i) {
-              final sel = i == 3;
-              return GestureDetector(
-                onTap: () {
-                  if (i == 0) Navigator.pop(context);
-                },
-                behavior: HitTestBehavior.opaque,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(items[i]['icon'] as IconData, color: sel ? kGreen : Colors.grey, size: 22),
-                      const SizedBox(height: 3),
-                      Text(
-                        items[i]['label'] as String,
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: sel ? kGreen : Colors.grey,
-                          fontWeight: sel ? FontWeight.bold : FontWeight.normal,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            }),
-          ),
-        ),
-      ),
-    );
   }
 }

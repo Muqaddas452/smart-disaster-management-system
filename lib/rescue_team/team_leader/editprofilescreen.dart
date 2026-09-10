@@ -1,7 +1,10 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import '/citizen_screens/profile_updated_screen.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:image_picker/image_picker.dart';
+import '../profile_updated_screen.dart';
 
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({super.key});
@@ -21,6 +24,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   bool _isLoading = true;
   bool _isSaving = false;
   String? _uid;
+
+  // ---- Profile picture state ----
+  File? _pickedImageFile;
+  String? _photoUrl;
+  bool _isUploadingPhoto = false;
 
   @override
   void initState() {
@@ -51,6 +59,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         _personalAddressController.text = data['personalAddress'] ?? '';
         _officialAddressController.text = data['officialAddress'] ?? '';
         _specializationController.text = data['specialization'] ?? '';
+        _photoUrl = data['photoUrl'];
       }
     } catch (e) {
       if (mounted) {
@@ -61,6 +70,107 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     }
 
     if (mounted) setState(() => _isLoading = false);
+  }
+
+  // ---- Pick image from gallery or camera ----
+  Future<void> _pickImage(ImageSource source) async {
+    try {
+      final picker = ImagePicker();
+      final XFile? picked = await picker.pickImage(
+        source: source,
+        maxWidth: 800,
+        maxHeight: 800,
+        imageQuality: 80,
+      );
+
+      if (picked != null) {
+        setState(() {
+          _pickedImageFile = File(picked.path);
+        });
+        await _uploadProfilePicture();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not pick image: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  void _showImageSourceSheet() {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: Wrap(
+            children: [
+              ListTile(
+                leading: const Icon(Icons.photo_library, color: Color(0xFF1B5E38)),
+                title: const Text('Choose from Gallery'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickImage(ImageSource.gallery);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.camera_alt, color: Color(0xFF1B5E38)),
+                title: const Text('Take a Photo'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickImage(ImageSource.camera);
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // ---- Upload picked image to Firebase Storage & save URL to Firestore ----
+  Future<void> _uploadProfilePicture() async {
+    if (_pickedImageFile == null || _uid == null) return;
+
+    setState(() => _isUploadingPhoto = true);
+
+    try {
+      final ref = FirebaseStorage.instance
+          .ref()
+          .child('rescue_profile_pictures')
+          .child('$_uid.jpg');
+
+      await ref.putFile(_pickedImageFile!);
+      final downloadUrl = await ref.getDownloadURL();
+
+      await FirebaseFirestore.instance.collection('rescueTeamUsers').doc(_uid).update({
+        'photoUrl': downloadUrl,
+      });
+
+      if (mounted) {
+        setState(() {
+          _photoUrl = downloadUrl;
+          _pickedImageFile = null;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Profile picture updated!'), backgroundColor: Colors.green),
+        );
+      }
+    } on FirebaseException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.message ?? 'Failed to upload picture.'), backgroundColor: Colors.red),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to upload picture: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isUploadingPhoto = false);
+    }
   }
 
   Future<void> _saveChanges() async {
@@ -150,21 +260,39 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             const SizedBox(height: 16),
 
             // Profile Avatar with edit option
-            Stack(
-              alignment: Alignment.bottomRight,
-              children: [
-                CircleAvatar(
-                  radius: 54,
-                  backgroundColor: Colors.grey.shade300,
-                  child: const Icon(Icons.person, size: 58, color: Colors.grey),
-                ),
-                CircleAvatar(
-                  radius: 16,
-                  backgroundColor: const Color(0xFF1B5E38),
-                  child: const Icon(Icons.camera_alt,
-                      size: 16, color: Colors.white),
-                ),
-              ],
+            GestureDetector(
+              onTap: _isUploadingPhoto ? null : _showImageSourceSheet,
+              child: Stack(
+                alignment: Alignment.bottomRight,
+                children: [
+                  CircleAvatar(
+                    radius: 54,
+                    backgroundColor: Colors.grey.shade300,
+                    backgroundImage: _pickedImageFile != null
+                        ? FileImage(_pickedImageFile!)
+                        : (_photoUrl != null ? NetworkImage(_photoUrl!) : null) as ImageProvider?,
+                    child: (_pickedImageFile == null && _photoUrl == null)
+                        ? const Icon(Icons.person, size: 58, color: Colors.grey)
+                        : null,
+                  ),
+                  if (_isUploadingPhoto)
+                    const Positioned.fill(
+                      child: CircleAvatar(
+                        backgroundColor: Colors.black45,
+                        child: SizedBox(
+                          height: 24, width: 24,
+                          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5),
+                        ),
+                      ),
+                    ),
+                  CircleAvatar(
+                    radius: 16,
+                    backgroundColor: const Color(0xFF1B5E38),
+                    child: const Icon(Icons.camera_alt,
+                        size: 16, color: Colors.white),
+                  ),
+                ],
+              ),
             ),
             const SizedBox(height: 32),
 

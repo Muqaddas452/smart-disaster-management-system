@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:geolocator/geolocator.dart';
 import 'rescue_home_screen.dart'; // Home screen import added
+import '../Services/fcm_token_service.dart'; // NEW — save FCM token right after registration, same as citizen users
 
 class MemberRegisterScreen extends StatefulWidget {
   final String email;
@@ -132,6 +133,11 @@ class _MemberRegisterScreenState extends State<MemberRegisterScreen> {
       );
 
       await batch.commit();
+
+      // NEW — save this device's FCM token right after registration, same as
+      // it's done for citizen users, so the member starts receiving task
+      // notifications immediately without needing to log out/in first.
+      await FcmTokenService.saveFCMToken(uid, collection: 'rescueTeamUsers');
 
       _showMessage('Registration completed successfully!');
 
