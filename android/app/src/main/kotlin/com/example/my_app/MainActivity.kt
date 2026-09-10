@@ -1,5 +1,6 @@
-package com.example.my_app
+package com.fyp.smartdisaster.management
 
 import io.flutter.embedding.android.FlutterActivity
 
-class MainActivity : FlutterActivity()
+class MainActivity: FlutterActivity() {
+}

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:smart_disaster_management_system/report_status_screen.dart';
+import 'package:smart_disaster_management_system/citizen_screens/report_status_screen.dart';
 
 
 class OfflineStatusScreen extends StatefulWidget {

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 //
-// TRIGGER: home_screen.dart mein "My Reports Status" section ke
+// TRIGGER: citizen_home_screen.dart mein "My Reports Status" section ke
 // _ReportCard pe tap karne par — internet available ho toh:
 //
 //   GestureDetector(
