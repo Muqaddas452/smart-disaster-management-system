@@ -183,11 +183,14 @@ class _DispatchTeamDialogState
       );
 
       // --------------------------------------------------------
-      // 2. Change REPORT status to Working
+      // 2. Change REPORT status to Assigned
       // --------------------------------------------------------
 
       await _reportService.assignReport(
-        report.id,
+        reportId: report.id,
+        teamId: widget.team.id,
+        teamName: widget.team.teamName,
+        leaderId: widget.team.leaderId,
       );
 
       if (!mounted) return;
@@ -200,7 +203,7 @@ class _DispatchTeamDialogState
           backgroundColor: Colors.green,
           content: Text(
             "Rescue Team Dispatched Successfully\n"
-                "Report status changed to Working.",
+                "Report status changed to Assigned.",
           ),
         ),
       );

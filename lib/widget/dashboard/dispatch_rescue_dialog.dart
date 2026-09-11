@@ -152,7 +152,10 @@ class _DispatchRescueDialogState
 
             /// Update report status
             await _reportService.assignReport(
-              selectedReport!.id,
+              reportId: selectedReport!.id,
+              teamId: selectedTeam!.id,
+              teamName: selectedTeam!.teamName,
+              leaderId: selectedTeam!.leaderId,
             );
 
             if (!mounted) return;

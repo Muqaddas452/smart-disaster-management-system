@@ -1,15 +1,25 @@
-const { onDocumentWritten } = require("firebase-functions/v2/firestore");
-const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const {
+  onDocumentWritten,
+  onDocumentCreated,
+  onDocumentUpdated,
+} = require("firebase-functions/v2/firestore");
 
-const { initializeApp } = require("firebase-admin/app");
-const { getAuth } = require("firebase-admin/auth");
+const { onCall, HttpsError } =
+  require("firebase-functions/v2/https");
+
+const { initializeApp } =
+  require("firebase-admin/app");
+
+const { getAuth } =
+  require("firebase-admin/auth");
 
 const {
   getFirestore,
   FieldValue,
 } = require("firebase-admin/firestore");
 
-const { getMessaging } = require("firebase-admin/messaging");
+const { getMessaging } =
+  require("firebase-admin/messaging");
 
 const crypto = require("crypto");
 const nodemailer = require("nodemailer");
@@ -22,13 +32,12 @@ const nodemailer = require("nodemailer");
 initializeApp();
 
 const db = getFirestore();
-
 const messaging = getMessaging();
 
 
 // ==========================================================
 // PART 1
-// Archive OpenWeather data into alerts collection
+// ARCHIVE OPENWEATHER DATA
 // ==========================================================
 
 exports.archiveOpenWeatherData = onDocumentWritten(
@@ -39,8 +48,6 @@ exports.archiveOpenWeatherData = onDocumentWritten(
     const afterData =
       event.data?.after?.data();
 
-
-    // If weather document was deleted
     if (!afterData) {
 
       console.log(
@@ -49,7 +56,6 @@ exports.archiveOpenWeatherData = onDocumentWritten(
 
       return null;
     }
-
 
     try {
 
@@ -90,11 +96,9 @@ exports.archiveOpenWeatherData = onDocumentWritten(
           afterData,
       });
 
-
       console.log(
         `OpenWeather data archived successfully: ${event.params.weatherId}`
       );
-
 
       return null;
 
@@ -112,25 +116,10 @@ exports.archiveOpenWeatherData = onDocumentWritten(
 
 
 // ==========================================================
-// PART 2 + PART 3 + PART 4
-//
-// Automatic affected zone
-// Automatic broadcast alert
-// Automatic FCM notification
-//
-// IMPORTANT:
-//
-// Disaster occurs
-//      ↓
-// affected_zones created
-//
-// Disaster continues
-//      ↓
-// Existing zone remains
-//
-// Disaster becomes Normal
-//      ↓
-// affected_zones automatically deleted
+// PART 2 + 3 + 4
+// AUTOMATIC AFFECTED ZONE
+// AUTOMATIC BROADCAST
+// AUTOMATIC DISASTER FCM
 // ==========================================================
 
 exports.createAffectedZone = onDocumentWritten(
@@ -141,11 +130,6 @@ exports.createAffectedZone = onDocumentWritten(
     const afterData =
       event.data?.after?.data();
 
-
-    // ======================================================
-    // ALERT DOCUMENT DELETED
-    // ======================================================
-
     if (!afterData) {
 
       console.log(
@@ -154,7 +138,6 @@ exports.createAffectedZone = onDocumentWritten(
 
       return null;
     }
-
 
     try {
 
@@ -169,14 +152,12 @@ exports.createAffectedZone = onDocumentWritten(
           ""
         ).trim();
 
-
       const district =
         String(
           afterData.district ||
           afterData.city ||
           ""
         ).trim();
-
 
       const risk =
         String(
@@ -185,14 +166,11 @@ exports.createAffectedZone = onDocumentWritten(
           "Low"
         ).trim();
 
-
       const latitude =
         Number(afterData.latitude);
 
-
       const longitude =
         Number(afterData.longitude);
-
 
       console.log(
         "===================================="
@@ -228,7 +206,7 @@ exports.createAffectedZone = onDocumentWritten(
 
 
       // ====================================================
-      // 2. CHECK NORMAL / NO DISASTER
+      // 2. NORMAL VALUES
       // ====================================================
 
       const normalValues = [
@@ -246,9 +224,7 @@ exports.createAffectedZone = onDocumentWritten(
         "no disaster detected",
 
         "no disaster detected.",
-
       ];
-
 
       const isNormal =
         normalValues.includes(
@@ -257,9 +233,7 @@ exports.createAffectedZone = onDocumentWritten(
 
 
       // ====================================================
-      // 3. NORMAL / NO DISASTER
-      //
-      // DELETE AFFECTED ZONE AUTOMATICALLY
+      // 3. NORMAL = DELETE AFFECTED ZONES
       // ====================================================
 
       if (isNormal) {
@@ -267,7 +241,6 @@ exports.createAffectedZone = onDocumentWritten(
         console.log(
           `NORMAL / NO DISASTER detected for ${district}`
         );
-
 
         if (!district) {
 
@@ -278,10 +251,6 @@ exports.createAffectedZone = onDocumentWritten(
           return null;
         }
 
-
-        // --------------------------------------------------
-        // Find ALL affected zones belonging to this city
-        // --------------------------------------------------
 
         const zonesSnapshot =
           await db
@@ -294,15 +263,10 @@ exports.createAffectedZone = onDocumentWritten(
             .get();
 
 
-        // --------------------------------------------------
-        // Delete affected zones
-        // --------------------------------------------------
-
         if (!zonesSnapshot.empty) {
 
           const batch =
             db.batch();
-
 
           for (
             const zoneDoc
@@ -313,15 +277,12 @@ exports.createAffectedZone = onDocumentWritten(
               zoneDoc.ref
             );
 
-
             console.log(
               `Deleting affected zone: ${zoneDoc.id}`
             );
           }
 
-
           await batch.commit();
-
 
           console.log(
             `Successfully deleted ${zonesSnapshot.size} affected zone(s) for ${district}.`
@@ -336,7 +297,7 @@ exports.createAffectedZone = onDocumentWritten(
 
 
         // --------------------------------------------------
-        // Mark active disaster states as INACTIVE
+        // MARK DISASTER STATES INACTIVE
         // --------------------------------------------------
 
         const stateSnapshot =
@@ -360,7 +321,6 @@ exports.createAffectedZone = onDocumentWritten(
           const batch =
             db.batch();
 
-
           for (
             const stateDoc
             of stateSnapshot.docs
@@ -379,9 +339,7 @@ exports.createAffectedZone = onDocumentWritten(
             );
           }
 
-
           await batch.commit();
-
 
           console.log(
             `Marked ${stateSnapshot.size} disaster state(s) as Inactive.`
@@ -390,15 +348,11 @@ exports.createAffectedZone = onDocumentWritten(
 
 
         console.log(
-          "===================================="
-        );
-
-        console.log(
           "NORMAL PROCESSING COMPLETED"
         );
 
         console.log(
-          "Affected zone removed."
+          "Affected zones removed."
         );
 
         console.log(
@@ -408,11 +362,6 @@ exports.createAffectedZone = onDocumentWritten(
         console.log(
           "No FCM notification sent."
         );
-
-        console.log(
-          "===================================="
-        );
-
 
         return null;
       }
@@ -450,40 +399,33 @@ exports.createAffectedZone = onDocumentWritten(
 
 
       // ====================================================
-      // 6. CALCULATE AFFECTED RADIUS
+      // 6. RADIUS
       // ====================================================
 
       const riskLower =
         risk.toLowerCase();
 
-
       let radiusMeters;
-
 
       if (riskLower === "low") {
 
-        radiusMeters =
-          5000;
+        radiusMeters = 5000;
 
       } else if (riskLower === "medium") {
 
-        radiusMeters =
-          10000;
+        radiusMeters = 10000;
 
       } else if (riskLower === "high") {
 
-        radiusMeters =
-          20000;
+        radiusMeters = 20000;
 
       } else if (riskLower === "extreme") {
 
-        radiusMeters =
-          40000;
+        radiusMeters = 40000;
 
       } else {
 
-        radiusMeters =
-          5000;
+        radiusMeters = 5000;
       }
 
 
@@ -493,7 +435,7 @@ exports.createAffectedZone = onDocumentWritten(
 
 
       // ====================================================
-      // 7. CREATE UNIQUE DISASTER STATE ID
+      // 7. DISASTER STATE ID
       // ====================================================
 
       const stateId =
@@ -508,7 +450,6 @@ exports.createAffectedZone = onDocumentWritten(
             ""
           );
 
-
       const stateRef =
         db
           .collection("disaster_states")
@@ -522,7 +463,6 @@ exports.createAffectedZone = onDocumentWritten(
       const stateDoc =
         await stateRef.get();
 
-
       let isNewDisaster =
         false;
 
@@ -532,13 +472,8 @@ exports.createAffectedZone = onDocumentWritten(
         stateDoc.data()?.status === "Active"
       ) {
 
-        // --------------------------------------------------
-        // Disaster is already active
-        // --------------------------------------------------
-
         isNewDisaster =
           false;
-
 
         await stateRef.update({
 
@@ -555,20 +490,14 @@ exports.createAffectedZone = onDocumentWritten(
             longitude,
         });
 
-
         console.log(
           "Existing active disaster detected."
         );
 
       } else {
 
-        // --------------------------------------------------
-        // NEW disaster
-        // --------------------------------------------------
-
         isNewDisaster =
           true;
-
 
         await stateRef.set({
 
@@ -598,9 +527,7 @@ exports.createAffectedZone = onDocumentWritten(
 
           alertId:
             event.params.alertId,
-
         });
-
 
         console.log(
           "NEW disaster event detected."
@@ -609,7 +536,7 @@ exports.createAffectedZone = onDocumentWritten(
 
 
       // ====================================================
-      // 9. FIND EXISTING AFFECTED ZONE
+      // 9. FIND EXISTING ZONE
       // ====================================================
 
       const existingSnapshot =
@@ -643,7 +570,6 @@ exports.createAffectedZone = onDocumentWritten(
         const existingDoc =
           existingSnapshot.docs[0];
 
-
         await existingDoc.ref.update({
 
           city:
@@ -668,19 +594,15 @@ exports.createAffectedZone = onDocumentWritten(
             "Active",
         });
 
-
         console.log(
           `Affected zone already exists: ${existingDoc.id}`
         );
 
-      }
+      } else {
 
-
-      // ====================================================
-      // 11. CREATE NEW AFFECTED ZONE
-      // ====================================================
-
-      else {
+        // ==================================================
+        // 11. CREATE NEW ZONE
+        // ==================================================
 
         const newZone = {
 
@@ -735,8 +657,7 @@ exports.createAffectedZone = onDocumentWritten(
 
       // ====================================================
       // 12. EXISTING DISASTER
-      //
-      // Do NOT send duplicate notification
+      // NO DUPLICATE ALERT
       // ====================================================
 
       if (!isNewDisaster) {
@@ -753,18 +674,16 @@ exports.createAffectedZone = onDocumentWritten(
           "No duplicate FCM notification."
         );
 
-
         return null;
       }
 
 
       // ====================================================
-      // 13. CREATE BROADCAST ALERT
+      // 13. BROADCAST ALERT
       // ====================================================
 
       const title =
         `🚨 ${risk} ${disaster} Alert`;
-
 
       const body =
         `${risk} ${disaster} has been detected in ${district}. ` +
@@ -815,6 +734,9 @@ exports.createAffectedZone = onDocumentWritten(
 
       // ====================================================
       // 14. GET CITIZENS
+      //
+      // IMPORTANT:
+      // Actual collection = citizens
       // ====================================================
 
       const citizensSnapshot =
@@ -834,7 +756,7 @@ exports.createAffectedZone = onDocumentWritten(
 
 
       // ====================================================
-      // 15. DISTANCE CALCULATION
+      // 15. DISTANCE FUNCTION
       // ====================================================
 
       function distanceInMeters(
@@ -847,28 +769,23 @@ exports.createAffectedZone = onDocumentWritten(
         const earthRadius =
           6371000;
 
-
         const lat1Rad =
           (lat1 * Math.PI) /
           180;
 
-
         const lat2Rad =
           (lat2 * Math.PI) /
           180;
-
 
         const deltaLat =
           ((lat2 - lat1) *
             Math.PI) /
           180;
 
-
         const deltaLon =
           ((lon2 - lon1) *
             Math.PI) /
           180;
-
 
         const a =
           Math.sin(
@@ -892,14 +809,12 @@ exports.createAffectedZone = onDocumentWritten(
               deltaLon / 2
             );
 
-
         const c =
           2 *
           Math.atan2(
             Math.sqrt(a),
             Math.sqrt(1 - a)
           );
-
 
         return (
           earthRadius *
@@ -909,7 +824,7 @@ exports.createAffectedZone = onDocumentWritten(
 
 
       // ====================================================
-      // 16. SEND FCM
+      // 16. SEND DISASTER FCM
       // ====================================================
 
       for (
@@ -920,10 +835,6 @@ exports.createAffectedZone = onDocumentWritten(
         const citizen =
           citizenDoc.data();
 
-
-        // --------------------------------------------------
-        // Missing location or FCM token
-        // --------------------------------------------------
 
         if (
           citizen.latitude === undefined ||
@@ -941,7 +852,6 @@ exports.createAffectedZone = onDocumentWritten(
           Number(
             citizen.latitude
           );
-
 
         const citizenLongitude =
           Number(
@@ -964,19 +874,11 @@ exports.createAffectedZone = onDocumentWritten(
         }
 
 
-        // --------------------------------------------------
-        // Calculate distance
-        // --------------------------------------------------
-
         const distance =
           distanceInMeters(
-
             latitude,
-
             longitude,
-
             citizenLatitude,
-
             citizenLongitude
           );
 
@@ -986,17 +888,13 @@ exports.createAffectedZone = onDocumentWritten(
         );
 
 
-        // --------------------------------------------------
-        // Citizen is inside affected radius
-        // --------------------------------------------------
-
         if (
           distance <= radiusMeters
         ) {
 
           try {
 
-            const message = {
+            await messaging.send({
 
               notification: {
 
@@ -1006,7 +904,6 @@ exports.createAffectedZone = onDocumentWritten(
                 body:
                   body,
               },
-
 
               data: {
 
@@ -1026,19 +923,12 @@ exports.createAffectedZone = onDocumentWritten(
                   "disaster_alert",
               },
 
-
               token:
                 citizen.fcmToken,
-            };
-
-
-            await messaging.send(
-              message
-            );
+            });
 
 
             sent++;
-
 
             console.log(
               `FCM sent to citizen: ${citizenDoc.id}`
@@ -1047,7 +937,6 @@ exports.createAffectedZone = onDocumentWritten(
           } catch (error) {
 
             failed++;
-
 
             console.error(
               `FCM failed for citizen ${citizenDoc.id}:`,
@@ -1061,10 +950,6 @@ exports.createAffectedZone = onDocumentWritten(
         }
       }
 
-
-      // ====================================================
-      // 17. FINAL LOG
-      // ====================================================
 
       console.log(
         "===================================="
@@ -1120,272 +1005,916 @@ exports.createAffectedZone = onDocumentWritten(
     }
   }
 );
-/// ==========================================================
- // PART 5
- // ADMIN TWO-FACTOR AUTHENTICATION - SEND OTP
- // ==========================================================
-
- exports.sendAdminOtp = onCall(
-   {
-     secrets: ["OTP_EMAIL", "OTP_EMAIL_PASSWORD"],
-   },
-
-   async (request) => {
-
-     // --------------------------------------------------------
-     // 1. Check if user is logged in
-     // --------------------------------------------------------
-
-     if (!request.auth) {
-       throw new HttpsError(
-         "unauthenticated",
-         "You must be logged in."
-       );
-     }
-
-     const uid = request.auth.uid;
-
-     try {
-
-       // ------------------------------------------------------
-       // 2. Get admin document
-       // ------------------------------------------------------
 
-       const adminRef =
-         db.collection("admins").doc(uid);
 
-       const adminDoc =
-         await adminRef.get();
+// ==========================================================
+// PART 5
+// ADMIN TWO-FACTOR AUTHENTICATION
+// ==========================================================
 
-       if (!adminDoc.exists) {
-         throw new HttpsError(
-           "permission-denied",
-           "Admin account not found."
-         );
-       }
+exports.sendAdminOtp = onCall(
+  {
+    secrets: [
+      "OTP_EMAIL",
+      "OTP_EMAIL_PASSWORD",
+    ],
+  },
 
-       const adminData =
-         adminDoc.data();
+  async (request) => {
 
-       // ------------------------------------------------------
-       // 3. Check admin is active
-       // ------------------------------------------------------
+    if (!request.auth) {
 
-       if (adminData.active !== true) {
-         throw new HttpsError(
-           "permission-denied",
-           "Admin account is disabled."
-         );
-       }
+      throw new HttpsError(
+        "unauthenticated",
+        "You must be logged in."
+      );
+    }
 
-       // ------------------------------------------------------
-       // 4. Check 2FA is enabled
-       // ------------------------------------------------------
 
-       if (adminData.twoFactorEnabled !== true) {
-         throw new HttpsError(
-           "failed-precondition",
-           "Two-Factor Authentication is not enabled."
-         );
-       }
+    const uid =
+      request.auth.uid;
 
-       // ------------------------------------------------------
-       // 5. Get admin email
-       // ------------------------------------------------------
 
-       const adminUser =
-         await getAuth().getUser(uid);
+    try {
 
-       const email =
-         adminUser.email;
+      const adminRef =
+        db
+          .collection("admins")
+          .doc(uid);
 
-       if (!email) {
-         throw new HttpsError(
-           "failed-precondition",
-           "No email is associated with this admin account."
-         );
-       }
+      const adminDoc =
+        await adminRef.get();
 
-       // ------------------------------------------------------
-       // 6. Generate 6-digit OTP
-       // ------------------------------------------------------
 
-       const otp =
-         crypto
-           .randomInt(100000, 1000000)
-           .toString();
+      if (!adminDoc.exists) {
 
-       // ------------------------------------------------------
-       // 7. Store OTP temporarily
-       // ------------------------------------------------------
+        throw new HttpsError(
+          "permission-denied",
+          "Admin account not found."
+        );
+      }
 
-       await db
-         .collection("admin_2fa")
-         .doc(uid)
-         .set({
 
-           otp: otp,
+      const adminData =
+        adminDoc.data();
 
-           email: email,
 
-           createdAt:
-             FieldValue.serverTimestamp(),
+      if (
+        adminData.active !== true
+      ) {
 
-           expiresAt:
-             new Date(
-               Date.now() + 5 * 60 * 1000
-             ),
+        throw new HttpsError(
+          "permission-denied",
+          "Admin account is disabled."
+        );
+      }
 
-         });
 
-       // ------------------------------------------------------
-       // 8. Email configuration
-       // ------------------------------------------------------
+      if (
+        adminData.twoFactorEnabled !== true
+      ) {
 
-       const transporter =
-         nodemailer.createTransport({
+        throw new HttpsError(
+          "failed-precondition",
+          "Two-Factor Authentication is not enabled."
+        );
+      }
 
-           service: "gmail",
 
-           auth: {
+      const adminUser =
+        await getAuth().getUser(uid);
 
-             user:
-               process.env.OTP_EMAIL,
+      const email =
+        adminUser.email;
 
-             pass:
-               process.env.OTP_EMAIL_PASSWORD,
 
-           },
+      if (!email) {
 
-         });
+        throw new HttpsError(
+          "failed-precondition",
+          "No email is associated with this admin account."
+        );
+      }
 
-       // ------------------------------------------------------
-       // 9. Send OTP email
-       // ------------------------------------------------------
 
-       await transporter.sendMail({
+      const otp =
+        crypto
+          .randomInt(
+            100000,
+            1000000
+          )
+          .toString();
 
-         from:
-           process.env.OTP_EMAIL,
 
-         to:
-           email,
+      await db
+        .collection("admin_2fa")
+        .doc(uid)
+        .set({
 
-         subject:
-           "Smart Disaster Management System - Admin OTP",
+          otp:
+            otp,
 
-         text:
-           `Your Smart Disaster Management System admin verification code is: ${otp}\n\n` +
-           `This code will expire in 5 minutes.\n\n` +
-           `If you did not try to log in, please ignore this email.`,
+          email:
+            email,
 
-       });
+          createdAt:
+            FieldValue.serverTimestamp(),
 
-       console.log(
-         `Admin OTP sent successfully to ${email}`
-       );
+          expiresAt:
+            new Date(
+              Date.now() +
+              5 * 60 * 1000
+            ),
+        });
 
-       return {
 
-         success: true,
+      const transporter =
+        nodemailer.createTransport({
 
-         message:
-           "OTP sent successfully.",
-
-       };
-
-     } catch (error) {
-
-       console.error(
-         "Error sending admin OTP:",
-         error
-       );
-
-       if (error instanceof HttpsError) {
-         throw error;
-       }
-
-       throw new HttpsError(
-         "internal",
-         "Could not send OTP email."
-       );
-     }
-   }
- );
- exports.verifyAdminOtp = onCall(async (request) => {
-   try {
-     // Make sure the user is logged in
-     if (!request.auth) {
-       throw new HttpsError(
-         "unauthenticated",
-         "You must be logged in to verify OTP."
-       );
-     }
-
-     const uid = request.auth.uid;
-     const enteredOtp = String(request.data?.otp || "").trim();
-
-     // Check OTP format
-     if (!/^\d{6}$/.test(enteredOtp)) {
-       throw new HttpsError(
-         "invalid-argument",
-         "OTP must be a 6-digit number."
-       );
-     }
-
-     // Get stored OTP
-     const otpRef = db.collection("admin_2fa").doc(uid);
-     const otpSnap = await otpRef.get();
-
-     if (!otpSnap.exists) {
-       throw new HttpsError(
-         "not-found",
-         "OTP not found. Please request a new OTP."
-       );
-     }
-
-     const otpData = otpSnap.data();
-
-     // Check expiry
-     if (
-       otpData.expiresAt &&
-       otpData.expiresAt.toDate() < new Date()
-     ) {
-       await otpRef.delete();
-
-       throw new HttpsError(
-         "deadline-exceeded",
-         "OTP has expired. Please request a new OTP."
-       );
-     }
-
-     // Check OTP
-     if (otpData.otp !== enteredOtp) {
-       throw new HttpsError(
-         "permission-denied",
-         "Invalid OTP."
-       );
-     }
-
-     // OTP is correct — delete it so it cannot be reused
-     await otpRef.delete();
-
-     console.log(`Admin OTP verified successfully for UID: ${uid}`);
-
-     return {
-       success: true,
-       message: "OTP verified successfully.",
-     };
-   } catch (error) {
-     console.error("Error verifying admin OTP:", error);
-
-     if (error instanceof HttpsError) {
-       throw error;
-     }
-
-     throw new HttpsError(
-       "internal",
-       "OTP verification failed."
-     );
-   }
- });
+          service:
+            "gmail",
+
+          auth: {
+
+            user:
+              process.env.OTP_EMAIL,
+
+            pass:
+              process.env.OTP_EMAIL_PASSWORD,
+          },
+        });
+
+
+      await transporter.sendMail({
+
+        from:
+          process.env.OTP_EMAIL,
+
+        to:
+          email,
+
+        subject:
+          "Smart Disaster Management System - Admin OTP",
+
+        text:
+          `Your Smart Disaster Management System admin verification code is: ${otp}\n\n` +
+          `This code will expire in 5 minutes.\n\n` +
+          `If you did not try to log in, please ignore this email.`,
+      });
+
+
+      console.log(
+        `Admin OTP sent successfully to ${email}`
+      );
+
+
+      return {
+
+        success:
+          true,
+
+        message:
+          "OTP sent successfully.",
+      };
+
+
+    } catch (error) {
+
+      console.error(
+        "Error sending admin OTP:",
+        error
+      );
+
+
+      if (
+        error instanceof HttpsError
+      ) {
+
+        throw error;
+      }
+
+
+      throw new HttpsError(
+        "internal",
+        "Could not send OTP email."
+      );
+    }
+  }
+);
+
+
+// ==========================================================
+// PART 6
+// EXISTING USER NOTIFICATION SYSTEM
+//
+// Collection:
+// Notifications
+//
+// User data:
+// citizens/{userId}
+//
+// This remains compatible with your existing citizen app.
+// ==========================================================
+
+exports.sendUserNotification = onDocumentCreated(
+  "Notifications/{notificationId}",
+
+  async (event) => {
+
+    const afterData =
+      event.data?.data();
+
+
+    if (!afterData) {
+
+      console.log(
+        "Notification data missing."
+      );
+
+      return null;
+    }
+
+
+    try {
+
+      const userId =
+        String(
+          afterData.userId ||
+          ""
+        ).trim();
+
+
+      const title =
+        String(
+          afterData.title ||
+          "Notification"
+        ).trim();
+
+
+      const message =
+        String(
+          afterData.message ||
+          ""
+        ).trim();
+
+
+      if (!userId) {
+
+        console.log(
+          "Notification userId is missing."
+        );
+
+        return null;
+      }
+
+
+      console.log(
+        "===================================="
+      );
+
+      console.log(
+        "USER NOTIFICATION RECEIVED"
+      );
+
+      console.log(
+        `Notification ID: ${event.params.notificationId}`
+      );
+
+      console.log(
+        `Citizen ID: ${userId}`
+      );
+
+      console.log(
+        `Title: ${title}`
+      );
+
+      console.log(
+        `Message: ${message}`
+      );
+
+      console.log(
+        "===================================="
+      );
+
+
+      // ====================================================
+      // GET CITIZEN
+      // ====================================================
+
+      const citizenRef =
+        db
+          .collection("citizens")
+          .doc(userId);
+
+
+      const citizenDoc =
+        await citizenRef.get();
+
+
+      if (!citizenDoc.exists) {
+
+        console.log(
+          `Citizen not found: ${userId}`
+        );
+
+        return null;
+      }
+
+
+      const citizen =
+        citizenDoc.data();
+
+
+      // ====================================================
+      // GET FCM TOKEN
+      // ====================================================
+
+      const fcmToken =
+        citizen.fcmToken;
+
+
+      if (!fcmToken) {
+
+        console.log(
+          `No FCM token found for citizen: ${userId}`
+        );
+
+        return null;
+      }
+
+
+      // ====================================================
+      // SEND FCM
+      // ====================================================
+
+      await messaging.send({
+
+        notification: {
+
+          title:
+            title,
+
+          body:
+            message,
+        },
+
+        data: {
+
+          notificationId:
+            event.params.notificationId,
+
+          type:
+            "user_notification",
+        },
+
+        token:
+          fcmToken,
+      });
+
+
+      console.log(
+        "===================================="
+      );
+
+      console.log(
+        "USER NOTIFICATION SENT"
+      );
+
+      console.log(
+        `Citizen ID: ${userId}`
+      );
+
+      console.log(
+        `Title: ${title}`
+      );
+
+      console.log(
+        "===================================="
+      );
+
+
+      return null;
+
+
+    } catch (error) {
+
+      console.error(
+        "User notification error:",
+        error
+      );
+
+      return null;
+    }
+  }
+);
+
+
+// ==========================================================
+// PART 7
+// RESCUE REPORT ASSIGNMENT NOTIFICATIONS
+//
+// Admin assigns team
+//        ↓
+// manual_reports updated
+//        ↓
+// Rescue leader notification
+//        ↓
+// Citizen notification
+// ==========================================================
+
+exports.onRescueReportAssigned = onDocumentUpdated(
+  "manual_reports/{reportId}",
+
+  async (event) => {
+
+    const before =
+      event.data?.before?.data();
+
+    const after =
+      event.data?.after?.data();
+
+
+    if (!before || !after) {
+      return null;
+    }
+
+
+    const oldTeamId =
+      String(
+        before.assignedTeamId ||
+        ""
+      ).trim();
+
+
+    const newTeamId =
+      String(
+        after.assignedTeamId ||
+        ""
+      ).trim();
+
+
+    const status =
+      String(
+        after.status ||
+        ""
+      ).trim();
+
+
+    // ------------------------------------------------------
+    // Only process NEW team assignment
+    // ------------------------------------------------------
+
+    if (
+      !newTeamId ||
+      oldTeamId === newTeamId ||
+      status !== "Assigned"
+    ) {
+
+      return null;
+    }
+
+
+    const leaderId =
+      String(
+        after.assignedLeaderId ||
+        ""
+      ).trim();
+
+
+    const citizenId =
+      String(
+        after.reportedBy ||
+        ""
+      ).trim();
+
+
+    const teamName =
+      String(
+        after.assignedTeamName ||
+        "Rescue Team"
+      ).trim();
+
+
+    const reportId =
+      event.params.reportId;
+
+
+    console.log(
+      "===================================="
+    );
+
+    console.log(
+      "RESCUE TEAM ASSIGNED"
+    );
+
+    console.log(
+      `Report: ${reportId}`
+    );
+
+    console.log(
+      `Team: ${teamName}`
+    );
+
+    console.log(
+      `Leader ID: ${leaderId}`
+    );
+
+    console.log(
+      `Citizen ID: ${citizenId}`
+    );
+
+    console.log(
+      "===================================="
+    );
+
+
+    // ======================================================
+    // RESCUE LEADER
+    // ======================================================
+
+    if (leaderId) {
+
+      await sendAndSaveNotification({
+
+        userId:
+          leaderId,
+
+        reportId:
+          reportId,
+
+        recipientType:
+          "rescue_leader",
+
+        title:
+          "🚑 New Rescue Task Assigned",
+
+        message:
+          `A new emergency report has been assigned to ${teamName}. Please check your rescue dashboard.`,
+      });
+
+    } else {
+
+      console.log(
+        "assignedLeaderId is empty."
+      );
+    }
+
+
+    // ======================================================
+    // CITIZEN
+    // ======================================================
+
+    if (citizenId) {
+
+      await sendAndSaveNotification({
+
+        userId:
+          citizenId,
+
+        reportId:
+          reportId,
+
+        recipientType:
+          "citizen",
+
+        title:
+          "🚑 Rescue Team Assigned",
+
+        message:
+          `${teamName} has been assigned to your emergency report. Help is on the way.`,
+      });
+
+    } else {
+
+      console.log(
+        "reportedBy is empty."
+      );
+    }
+
+
+    return null;
+  }
+);
+
+
+// ==========================================================
+// PART 8
+// RESCUE STATUS CHANGE
+//
+// In Progress
+// Arrived
+// Resolved
+// ==========================================================
+
+exports.onRescueStatusChanged = onDocumentUpdated(
+  "manual_reports/{reportId}",
+
+  async (event) => {
+
+    const before =
+      event.data?.before?.data();
+
+    const after =
+      event.data?.after?.data();
+
+
+    if (!before || !after) {
+      return null;
+    }
+
+
+    const oldStatus =
+      String(
+        before.status ||
+        ""
+      ).trim();
+
+
+    const newStatus =
+      String(
+        after.status ||
+        ""
+      ).trim();
+
+
+    if (
+      oldStatus === newStatus
+    ) {
+
+      return null;
+    }
+
+
+    const citizenId =
+      String(
+        after.reportedBy ||
+        ""
+      ).trim();
+
+
+    const reportId =
+      event.params.reportId;
+
+
+    let title =
+      "";
+
+    let message =
+      "";
+
+
+    if (
+      newStatus === "In Progress"
+    ) {
+
+      title =
+        "🚑 Rescue Team Responding";
+
+      message =
+        "The rescue team is now responding to your emergency report.";
+
+    } else if (
+      newStatus === "Arrived"
+    ) {
+
+      title =
+        "📍 Rescue Team Has Arrived";
+
+      message =
+        "The rescue team has arrived at the reported emergency location.";
+
+    } else if (
+      newStatus === "Resolved"
+    ) {
+
+      title =
+        "✅ Emergency Resolved";
+
+      message =
+        "Your emergency report has been resolved by the rescue team.";
+
+    } else {
+
+      return null;
+    }
+
+
+    console.log(
+      "===================================="
+    );
+
+    console.log(
+      "RESCUE STATUS CHANGED"
+    );
+
+    console.log(
+      `Report: ${reportId}`
+    );
+
+    console.log(
+      `Old status: ${oldStatus}`
+    );
+
+    console.log(
+      `New status: ${newStatus}`
+    );
+
+    console.log(
+      `Citizen: ${citizenId}`
+    );
+
+    console.log(
+      "===================================="
+    );
+
+
+    if (!citizenId) {
+
+      console.log(
+        "reportedBy is empty."
+      );
+
+      return null;
+    }
+
+
+    await sendAndSaveNotification({
+
+      userId:
+        citizenId,
+
+      reportId:
+        reportId,
+
+      recipientType:
+        "citizen",
+
+      title:
+        title,
+
+      message:
+        message,
+    });
+
+
+    return null;
+  }
+);
+
+
+// ==========================================================
+// PART 9
+// RESCUE NOTIFICATION HELPER
+//
+// IMPORTANT:
+// Notification history is saved in EXISTING
+// "Notifications" collection.
+//
+// We do NOT create a lowercase notifications collection.
+// ==========================================================
+
+async function sendAndSaveNotification({
+  userId,
+  reportId,
+  recipientType,
+  title,
+  message,
+}) {
+
+  try {
+
+    // ======================================================
+    // GET CITIZEN / RESCUE USER
+    // ======================================================
+
+    const citizenRef =
+      db
+        .collection("citizens")
+        .doc(userId);
+
+
+    const citizenDoc =
+      await citizenRef.get();
+
+
+    // ======================================================
+    // SAVE NOTIFICATION IN EXISTING COLLECTION
+    // ======================================================
+
+    const notificationRef =
+      await db
+        .collection("Notifications")
+        .add({
+
+          userId:
+            userId,
+
+          reportId:
+            reportId,
+
+          recipientType:
+            recipientType,
+
+          title:
+            title,
+
+          message:
+            message,
+
+          type:
+            "rescue",
+
+          read:
+            false,
+
+          createdAt:
+            FieldValue.serverTimestamp(),
+        });
+
+
+    console.log(
+      `Notification history saved: ${notificationRef.id}`
+    );
+
+
+    // ======================================================
+    // CITIZEN NOT FOUND
+    // ======================================================
+
+    if (!citizenDoc.exists) {
+
+      console.log(
+        `Citizen/rescue user not found: ${userId}`
+      );
+
+      return;
+    }
+
+
+    const citizen =
+      citizenDoc.data();
+
+
+    // ======================================================
+    // GET FCM TOKEN
+    // ======================================================
+
+    const fcmToken =
+      citizen.fcmToken;
+
+
+    if (!fcmToken) {
+
+      console.log(
+        `No FCM token for user: ${userId}. Notification history saved.`
+      );
+
+      return;
+    }
+
+
+    // ======================================================
+    // SEND PUSH
+    // ======================================================
+
+    await messaging.send({
+
+      notification: {
+
+        title:
+          title,
+
+        body:
+          message,
+      },
+
+      data: {
+
+        notificationId:
+          notificationRef.id,
+
+        reportId:
+          reportId,
+
+        type:
+          "rescue_notification",
+      },
+
+      token:
+        fcmToken,
+    });
+
+
+    console.log(
+      `Rescue FCM sent successfully to: ${userId}`
+    );
+
+
+  } catch (error) {
+
+    console.error(
+      `Rescue notification error for ${userId}:`,
+      error
+    );
+  }
+}

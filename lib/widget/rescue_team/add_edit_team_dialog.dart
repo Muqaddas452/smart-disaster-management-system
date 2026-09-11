@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../model/rescue_team_model.dart';
 import '../../services/rescue_team_service.dart';
@@ -46,76 +47,90 @@ class _AddEditTeamDialogState
           widget.team!.vehicle;
     }
   }
-
   Future<void> save() async {
-
     if (!_formKey.currentState!.validate()) return;
 
     setState(() {
       loading = true;
     });
 
-    final team = RescueTeam(
-      id: widget.team?.id ?? "",
-
-      teamName: _teamController.text.trim(),
-
-      leader: _leaderController.text.trim(),
-
-      phone: _phoneController.text.trim(),
-
-      members:
-      int.parse(_membersController.text),
-
-      vehicle: _vehicleController.text.trim(),
-
-      status:
-      widget.team?.status ?? "Pending",
-
-      assignedReportId:
-      widget.team?.assignedReportId ?? "",
-
-      assignedArea:
-      widget.team?.assignedArea ?? "",
-
-      latitude:
-      widget.team?.latitude ?? 0,
-
-      longitude:
-      widget.team?.longitude ?? 0,
-
-      createdAt:
-      widget.team?.createdAt ??
-          DateTime.now(),
-    );
-
     try {
+      String leaderId = widget.team?.leaderId ?? "";
+
+      if (leaderId.isEmpty ||
+          widget.team?.phone != _phoneController.text.trim()) {
+        final leaderQuery = await FirebaseFirestore.instance
+            .collection("users")
+            .where(
+          "phone",
+          isEqualTo: _phoneController.text.trim(),
+        )
+            .limit(1)
+            .get();
+
+        if (leaderQuery.docs.isEmpty) {
+          throw Exception(
+            "No rescue leader account found with this phone number.",
+          );
+        }
+
+        leaderId = leaderQuery.docs.first.id;
+      }
+
+      final team = RescueTeam(
+        id: widget.team?.id ?? "",
+
+        teamName: _teamController.text.trim(),
+
+        leader: _leaderController.text.trim(),
+
+        leaderId: leaderId,
+
+        phone: _phoneController.text.trim(),
+
+        members: int.parse(_membersController.text),
+
+        vehicle: _vehicleController.text.trim(),
+
+        status: widget.team?.status ?? "Pending",
+
+        assignedReportId:
+        widget.team?.assignedReportId ?? "",
+
+        assignedArea:
+        widget.team?.assignedArea ?? "",
+
+        latitude:
+        widget.team?.latitude ?? 0,
+
+        longitude:
+        widget.team?.longitude ?? 0,
+
+        createdAt:
+        widget.team?.createdAt ?? DateTime.now(),
+      );
 
       if (widget.team == null) {
-
         await _service.addRescueTeam(team);
-
       } else {
-
         await _service.updateRescueTeam(team);
-
       }
 
       if (mounted) {
         Navigator.pop(context);
       }
-
     } catch (e) {
+      if (mounted) {
+        setState(() {
+          loading = false;
+        });
 
-      setState(() {
-        loading = false;
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(e.toString()),
-        ),
-      );
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.toString()),
+          ),
+        );
+      }
     }
   }
 

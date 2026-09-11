@@ -64,12 +64,21 @@ class ReportService {
   // already uses "In Progress" as the working status.
   //
 
-  Future<void> assignReport(String reportId) async {
+  Future<void> assignReport({
+    required String reportId,
+    required String teamId,
+    required String teamName,
+    required String leaderId,
+  }) async {
     await _firestore
         .collection(_collection)
         .doc(reportId)
         .update({
-      "status": "In Progress",
+      "assignedTeamId": teamId,
+      "assignedTeamName": teamName,
+      "assignedLeaderId": leaderId,
+      "assignedAt": FieldValue.serverTimestamp(),
+      "status": "Assigned",
     });
   }
 
