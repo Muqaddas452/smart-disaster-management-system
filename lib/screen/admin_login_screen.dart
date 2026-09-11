@@ -17,8 +17,92 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
   final _passwordController = TextEditingController();
 
   bool _loading = false;
+  bool _resetLoading = false;
   bool _obscurePassword = true;
 
+  // =========================
+  // FORGOT PASSWORD
+  // =========================
+  Future<void> _forgotPassword() async {
+    final email = _emailController.text.trim();
+
+    if (email.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Please enter your admin email first."),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _resetLoading = true;
+    });
+
+    try {
+      await FirebaseAuth.instance.sendPasswordResetEmail(
+        email: email,
+      );
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            "Password reset email sent. Please check your inbox.",
+          ),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+
+      String message = "Could not send password reset email.";
+
+      switch (e.code) {
+        case "invalid-email":
+          message = "Please enter a valid email address.";
+          break;
+
+        case "user-not-found":
+          message = "No account found with this email.";
+          break;
+
+        case "too-many-requests":
+          message = "Too many requests. Please try again later.";
+          break;
+
+        default:
+          message = e.message ?? message;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            "Could not send reset email: $e",
+          ),
+        ),
+      );
+    }
+
+    if (mounted) {
+      setState(() {
+        _resetLoading = false;
+      });
+    }
+  }
+
+  // =========================
+  // LOGIN
+  // =========================
   Future<void> _login() async {
     if (_emailController.text.trim().isEmpty ||
         _passwordController.text.isEmpty) {
@@ -61,11 +145,13 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
       }
 
       // Check Two-Factor Authentication
-      final twoFactorEnabled = data["twoFactorEnabled"] == true;
+      final twoFactorEnabled =
+          data["twoFactorEnabled"] == true;
 
       if (twoFactorEnabled) {
         try {
-          final callable = FirebaseFunctions.instance.httpsCallable(
+          final callable =
+          FirebaseFunctions.instance.httpsCallable(
             'sendAdminOtp',
           );
 
@@ -166,6 +252,13 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
   }
 
   @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xffF5F7FA),
@@ -183,7 +276,9 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                   size: 70,
                   color: Colors.green,
                 ),
+
                 const SizedBox(height: 20),
+
                 const Text(
                   "Admin Login",
                   style: TextStyle(
@@ -191,16 +286,23 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                     fontWeight: FontWeight.bold,
                   ),
                 ),
+
                 const SizedBox(height: 30),
+
+                // EMAIL
                 TextField(
                   controller: _emailController,
+                  keyboardType: TextInputType.emailAddress,
                   decoration: const InputDecoration(
                     labelText: "Email",
                     prefixIcon: Icon(Icons.email),
                     border: OutlineInputBorder(),
                   ),
                 ),
+
                 const SizedBox(height: 20),
+
+                // PASSWORD
                 TextField(
                   controller: _passwordController,
                   obscureText: _obscurePassword,
@@ -216,13 +318,39 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                       ),
                       onPressed: () {
                         setState(() {
-                          _obscurePassword = !_obscurePassword;
+                          _obscurePassword =
+                          !_obscurePassword;
                         });
                       },
                     ),
                   ),
                 ),
-                const SizedBox(height: 30),
+
+                // FORGOT PASSWORD
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: _resetLoading ? null : _forgotPassword,
+                    child: _resetLoading
+                        ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                      ),
+                    )
+                        : const Text(
+                      "Forgot Password?",
+                      style: TextStyle(
+                        fontSize: 14,
+                      ),
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 10),
+
+                // LOGIN BUTTON
                 SizedBox(
                   width: double.infinity,
                   height: 50,
@@ -232,7 +360,9 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                         ? const CircularProgressIndicator()
                         : const Text(
                       "Login",
-                      style: TextStyle(fontSize: 18),
+                      style: TextStyle(
+                        fontSize: 18,
+                      ),
                     ),
                   ),
                 ),
