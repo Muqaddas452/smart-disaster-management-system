@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import '../widget/admin_profile_card.dart';
 import '../widget/account_settings_card.dart';
 import '../widget/notification_settings_card.dart';
-import '../widget/system_settings_card.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -50,11 +49,6 @@ class SettingsScreen extends StatelessWidget {
 
             // Notification Settings
             const NotificationSettingsCard(),
-
-            const SizedBox(height: 20),
-
-            // System Settings
-            const SystemSettingsCard(),
           ],
         ),
       ),

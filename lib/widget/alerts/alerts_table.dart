@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../model/alert_model.dart';
 
-class AlertsTable extends StatelessWidget {
+class AlertsTable extends StatefulWidget {
   final List<AlertModel> alerts;
 
   final Function(AlertModel) onView;
@@ -17,7 +17,30 @@ class AlertsTable extends StatelessWidget {
   });
 
   @override
+  State<AlertsTable> createState() => _AlertsTableState();
+}
+
+class _AlertsTableState extends State<AlertsTable> {
+  // Explicit ScrollControllers so the vertical list gets its
+  // own scroll region on Flutter Web instead of the mouse
+  // wheel being captured by the page's outer scroll view.
+  final ScrollController _verticalController =
+  ScrollController();
+
+  final ScrollController _horizontalController =
+  ScrollController();
+
+  @override
+  void dispose() {
+    _verticalController.dispose();
+    _horizontalController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final bool shouldScroll = widget.alerts.length > 5;
+
     return Card(
       elevation: 2,
       shape: RoundedRectangleBorder(
@@ -27,100 +50,146 @@ class AlertsTable extends StatelessWidget {
         padding: const EdgeInsets.all(16),
 
         // Vertical scroll for 10+ records
-        child: SingleChildScrollView(
-          scrollDirection: Axis.vertical,
+        child: SizedBox(
+          height: shouldScroll ? 440 : null,
+          child: Scrollbar(
+            controller: _verticalController,
+            thumbVisibility: shouldScroll,
+            child: SingleChildScrollView(
+              controller: _verticalController,
+              scrollDirection: Axis.vertical,
 
-          // Horizontal scroll for wide table
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
+              // Horizontal scroll for wide table
+              child: Scrollbar(
+                controller: _horizontalController,
+                thumbVisibility: true,
+                notificationPredicate: (notification) {
+                  return notification.depth == 0;
+                },
+                child: SingleChildScrollView(
+                  controller: _horizontalController,
+                  scrollDirection: Axis.horizontal,
 
-            child: DataTable(
-              headingRowColor:
-              MaterialStateProperty.all(
-                const Color(0xffF5F5F5),
-              ),
-
-              headingTextStyle: const TextStyle(
-                fontWeight: FontWeight.bold,
-                color: Colors.black87,
-              ),
-
-              columns: const [
-                DataColumn(label: Text("ID")),
-                DataColumn(label: Text("Disaster")),
-                DataColumn(label: Text("Priority")),
-                DataColumn(label: Text("Area")),
-                DataColumn(label: Text("Status")),
-                DataColumn(label: Text("Date")),
-                DataColumn(label: Text("Actions")),
-              ],
-
-              rows: alerts.map((alert) {
-                return DataRow(
-                  cells: [
-                    DataCell(
-                      Text(alert.id),
+                  child: DataTable(
+                    headingRowColor:
+                    MaterialStateProperty.all(
+                      const Color(0xffE3EAF3),
                     ),
 
-                    DataCell(
-                      Text(alert.disaster),
+                    headingTextStyle: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black87,
                     ),
 
-                    DataCell(
-                      _priorityChip(alert.priority),
-                    ),
+                    columnSpacing: 25,
 
-                    DataCell(
-                      Text(alert.area),
-                    ),
+                    columns: const [
+                      DataColumn(label: Text("ID")),
+                      DataColumn(label: Text("Disaster")),
+                      DataColumn(label: Text("Priority")),
+                      DataColumn(label: Text("Area")),
+                      DataColumn(label: Text("Status")),
+                      DataColumn(label: Text("Date")),
+                      DataColumn(label: Text("Actions")),
+                    ],
 
-                    DataCell(
-                      _statusChip(alert.status),
-                    ),
+                    rows: widget.alerts
+                        .asMap()
+                        .entries
+                        .map((entry) {
+                      final index = entry.key;
+                      final alert = entry.value;
 
-                    DataCell(
-                      Text(
-                        "${alert.date.day}/"
-                            "${alert.date.month}/"
-                            "${alert.date.year}",
-                      ),
-                    ),
-
-                    DataCell(
-                      Row(
-                        children: [
-                          IconButton(
-                            tooltip: "View",
-                            icon: const Icon(
-                              Icons.visibility,
-                              color: Colors.blue,
-                            ),
-                            onPressed: () => onView(alert),
+                      return DataRow(
+                        color:
+                        MaterialStateProperty.all(
+                          index.isEven
+                              ? const Color(
+                            0xffF4F7FA,
+                          )
+                              : Colors.white,
+                        ),
+                        cells: [
+                          DataCell(
+                            Text(alert.id),
                           ),
 
-                          IconButton(
-                            tooltip: "Edit",
-                            icon: const Icon(
-                              Icons.edit,
-                              color: Colors.orange,
-                            ),
-                            onPressed: () => onEdit(alert),
+                          DataCell(
+                            Text(alert.disaster),
                           ),
 
-                          IconButton(
-                            tooltip: "Delete",
-                            icon: const Icon(
-                              Icons.delete,
-                              color: Colors.red,
+                          DataCell(
+                            _priorityChip(
+                              alert.priority,
                             ),
-                            onPressed: () => onDelete(alert),
+                          ),
+
+                          DataCell(
+                            Text(alert.area),
+                          ),
+
+                          DataCell(
+                            _statusChip(alert.status),
+                          ),
+
+                          DataCell(
+                            Text(
+                              "${alert.date.day}/"
+                                  "${alert.date.month}/"
+                                  "${alert.date.year}",
+                            ),
+                          ),
+
+                          DataCell(
+                            Row(
+                              mainAxisSize:
+                              MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  tooltip: "View",
+                                  icon: const Icon(
+                                    Icons.visibility,
+                                    color: Colors.blue,
+                                  ),
+                                  onPressed: () =>
+                                      widget.onView(
+                                        alert,
+                                      ),
+                                ),
+
+                                IconButton(
+                                  tooltip: "Edit",
+                                  icon: const Icon(
+                                    Icons.edit,
+                                    color:
+                                    Colors.orange,
+                                  ),
+                                  onPressed: () =>
+                                      widget.onEdit(
+                                        alert,
+                                      ),
+                                ),
+
+                                IconButton(
+                                  tooltip: "Delete",
+                                  icon: const Icon(
+                                    Icons.delete,
+                                    color: Colors.red,
+                                  ),
+                                  onPressed: () =>
+                                      widget.onDelete(
+                                        alert,
+                                      ),
+                                ),
+                              ],
+                            ),
                           ),
                         ],
-                      ),
-                    ),
-                  ],
-                );
-              }).toList(),
+                      );
+                    }).toList(),
+                  ),
+                ),
+              ),
             ),
           ),
         ),
@@ -132,20 +201,31 @@ class AlertsTable extends StatelessWidget {
     Color color;
 
     switch (priority.toLowerCase()) {
+      // Most severe
       case "critical":
+      case "extreme":
+      case "severe":
         color = Colors.red;
         break;
 
       case "high":
-        color = Colors.orange;
+        color = Colors.deepOrange;
         break;
 
       case "medium":
-        color = Colors.amber;
+      case "moderate":
+        color = Colors.amber.shade800;
+        break;
+
+      case "low":
+      case "minor":
+        color = Colors.green;
         break;
 
       default:
-        color = Colors.green;
+        // Unknown value - grey instead of green so it
+        // doesn't silently look "safe" like a Low alert.
+        color = Colors.grey;
     }
 
     return Chip(
@@ -165,6 +245,8 @@ class AlertsTable extends StatelessWidget {
 
     switch (status.toLowerCase()) {
       case "sent":
+      case "resolved":
+      case "inactive":
         color = Colors.green;
         break;
 
@@ -172,8 +254,12 @@ class AlertsTable extends StatelessWidget {
         color = Colors.orange;
         break;
 
-      default:
+      case "active":
         color = Colors.red;
+        break;
+
+      default:
+        color = Colors.grey;
     }
 
     return Chip(

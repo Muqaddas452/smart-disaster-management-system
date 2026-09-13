@@ -1409,95 +1409,171 @@ exports.sendUserNotification = onDocumentCreated(
 );
 
 
+
 // ==========================================================
-// PART 7
-// RESCUE REPORT ASSIGNMENT NOTIFICATIONS
+// HELPER: RESOLVE CITIZEN ID FOR A TASK
 //
-// Admin assigns team
-//        ↓
-// manual_reports updated
-//        ↓
-// Rescue leader notification
-//        ↓
-// Citizen notification
+// Tasks created via the dashboard's "Assign" flow copy
+// citizenId from the report, but some reports only ever
+// stored the citizen's UID under `reportedBy` (the field the
+// original manual_reports-based notification code relied on),
+// not under `citizenId`. If a task's own citizenId is empty,
+// fall back to reading it off the linked manual_reports doc.
 // ==========================================================
 
-exports.onRescueReportAssigned = onDocumentUpdated(
-  "manual_reports/{reportId}",
+async function resolveCitizenId(after) {
+
+  const directId =
+    String(
+      after.citizenId ||
+      ""
+    ).trim();
+
+  if (directId) {
+    return directId;
+  }
+
+  const reportId =
+    String(
+      after.reportId ||
+      ""
+    ).trim();
+
+  if (!reportId) {
+    return "";
+  }
+
+  try {
+
+    const reportDoc =
+      await db
+        .collection("manual_reports")
+        .doc(reportId)
+        .get();
+
+    if (!reportDoc.exists) {
+      return "";
+    }
+
+    const reportData =
+      reportDoc.data() ||
+      {};
+
+    const fallbackId =
+      String(
+        reportData.citizenId ||
+        reportData.reportedBy ||
+        reportData.userId ||
+        ""
+      ).trim();
+
+    return fallbackId;
+
+  } catch (error) {
+
+    console.error(
+      `Failed to resolve citizenId from manual_reports/${reportId}:`,
+      error
+    );
+
+    return "";
+  }
+}
+
+
+// ==========================================================
+// PART 7
+// RESCUE TEAM ASSIGNMENT NOTIFICATIONS
+//
+// Admin (web dashboard) assigns a rescue team to a task
+//        ↓
+// tasks/{taskId} written with a non-empty teamId
+//        ↓
+// Rescue leader gets an FCM push
+//
+// IMPORTANT:
+// The dashboard's real central collection for an active
+// rescue operation is `tasks` (NOT `manual_reports`).
+// `manual_reports` only holds the original citizen report;
+// team/leader assignment and live status (dispatched,
+// accepted, enroute, in_progress, resolved) live on the
+// `tasks` document, written either by the admin dashboard
+// (assignment) or by the rescue team mobile app (status
+// updates). We listen here instead of on manual_reports so
+// this fires no matter which of those two flows created or
+// assigned the task.
+// ==========================================================
+
+exports.onRescueTeamAssigned = onDocumentWritten(
+  "tasks/{taskId}",
 
   async (event) => {
 
     const before =
-      event.data?.before?.data();
+      event.data?.before?.exists
+        ? event.data.before.data()
+        : null;
 
     const after =
       event.data?.after?.data();
 
-
-    if (!before || !after) {
-      return null;
-    }
-
-
-    const oldTeamId =
-      String(
-        before.assignedTeamId ||
-        ""
-      ).trim();
-
-
-    const newTeamId =
-      String(
-        after.assignedTeamId ||
-        ""
-      ).trim();
-
-
-    const status =
-      String(
-        after.status ||
-        ""
-      ).trim();
-
-
-    // ------------------------------------------------------
-    // Only process NEW team assignment
-    // ------------------------------------------------------
-
-    if (
-      !newTeamId ||
-      oldTeamId === newTeamId ||
-      status !== "Assigned"
-    ) {
+    if (!after) {
+      console.log(
+        "Task deleted. Nothing to process."
+      );
 
       return null;
     }
 
+    const beforeTeamId =
+      String(
+        before?.teamId ||
+        ""
+      ).trim();
+
+    const afterTeamId =
+      String(
+        after.teamId ||
+        ""
+      ).trim();
+
+    // ------------------------------------------------------
+    // Only fire when a team is newly attached to this task
+    // (task just created with a team, or an existing
+    // "Unassigned" task just got a team via the dashboard's
+    // Assign Task button).
+    // ------------------------------------------------------
+
+    if (!afterTeamId || afterTeamId === beforeTeamId) {
+      return null;
+    }
 
     const leaderId =
       String(
-        after.assignedLeaderId ||
+        after.leaderId ||
         ""
       ).trim();
-
 
     const citizenId =
       String(
-        after.reportedBy ||
+        after.citizenId ||
         ""
       ).trim();
 
-
     const teamName =
       String(
-        after.assignedTeamName ||
+        after.teamName ||
         "Rescue Team"
       ).trim();
 
+    const emergencyType =
+      String(
+        after.emergencyType ||
+        "emergency"
+      ).trim();
 
-    const reportId =
-      event.params.reportId;
-
+    const taskId =
+      event.params.taskId;
 
     console.log(
       "===================================="
@@ -1508,7 +1584,7 @@ exports.onRescueReportAssigned = onDocumentUpdated(
     );
 
     console.log(
-      `Report: ${reportId}`
+      `Task: ${taskId}`
     );
 
     console.log(
@@ -1527,9 +1603,12 @@ exports.onRescueReportAssigned = onDocumentUpdated(
       "===================================="
     );
 
-
     // ======================================================
     // RESCUE LEADER
+    //
+    // Leader accounts live in the `users` collection
+    // (see add_edit_team_dialog.dart: leaderId is looked up
+    // by phone number in `users`), NOT `citizens`.
     // ======================================================
 
     if (leaderId) {
@@ -1539,8 +1618,11 @@ exports.onRescueReportAssigned = onDocumentUpdated(
         userId:
           leaderId,
 
-        reportId:
-          reportId,
+        collection:
+          "users",
+
+        taskId:
+          taskId,
 
         recipientType:
           "rescue_leader",
@@ -1549,48 +1631,15 @@ exports.onRescueReportAssigned = onDocumentUpdated(
           "🚑 New Rescue Task Assigned",
 
         message:
-          `A new emergency report has been assigned to ${teamName}. Please check your rescue dashboard.`,
+          `A new ${emergencyType} report has been assigned to ${teamName}. Please check your rescue dashboard.`,
       });
 
     } else {
 
       console.log(
-        "assignedLeaderId is empty."
+        "leaderId is empty on this task."
       );
     }
-
-
-    // ======================================================
-    // CITIZEN
-    // ======================================================
-
-    if (citizenId) {
-
-      await sendAndSaveNotification({
-
-        userId:
-          citizenId,
-
-        reportId:
-          reportId,
-
-        recipientType:
-          "citizen",
-
-        title:
-          "🚑 Rescue Team Assigned",
-
-        message:
-          `${teamName} has been assigned to your emergency report. Help is on the way.`,
-      });
-
-    } else {
-
-      console.log(
-        "reportedBy is empty."
-      );
-    }
-
 
     return null;
   }
@@ -1599,15 +1648,24 @@ exports.onRescueReportAssigned = onDocumentUpdated(
 
 // ==========================================================
 // PART 8
-// RESCUE STATUS CHANGE
+// RESCUE STATUS CHANGE NOTIFICATIONS (to citizen)
 //
-// In Progress
-// Arrived
-// Resolved
+// Fires whenever tasks/{taskId}.status changes.
+//
+// Matches the status flow already used across the dashboard
+// (RescueTasksScreen._buildTimeline):
+//   dispatched -> accepted -> assigned -> enroute
+//     -> in_progress -> resolved
+//
+// - "accepted"    -> rescue leader accepted the task ->
+//                    tell the citizen help is on the way.
+// - "enroute"     -> team is travelling to the location.
+// - "in_progress" -> team is actively working the rescue.
+// - "resolved"    -> rescue is complete.
 // ==========================================================
 
 exports.onRescueStatusChanged = onDocumentUpdated(
-  "manual_reports/{reportId}",
+  "tasks/{taskId}",
 
   async (event) => {
 
@@ -1617,44 +1675,31 @@ exports.onRescueStatusChanged = onDocumentUpdated(
     const after =
       event.data?.after?.data();
 
-
     if (!before || !after) {
       return null;
     }
-
 
     const oldStatus =
       String(
         before.status ||
         ""
-      ).trim();
-
+      ).trim().toLowerCase();
 
     const newStatus =
       String(
         after.status ||
         ""
-      ).trim();
+      ).trim().toLowerCase();
 
-
-    if (
-      oldStatus === newStatus
-    ) {
-
+    if (oldStatus === newStatus) {
       return null;
     }
 
-
     const citizenId =
-      String(
-        after.reportedBy ||
-        ""
-      ).trim();
+      await resolveCitizenId(after);
 
-
-    const reportId =
-      event.params.reportId;
-
+    const taskId =
+      event.params.taskId;
 
     let title =
       "";
@@ -1662,30 +1707,31 @@ exports.onRescueStatusChanged = onDocumentUpdated(
     let message =
       "";
 
-
-    if (
-      newStatus === "In Progress"
-    ) {
+    if (newStatus === "accepted") {
 
       title =
-        "🚑 Rescue Team Responding";
+        "🚑 Rescue Team Assigned";
 
       message =
-        "The rescue team is now responding to your emergency report.";
+        "Your report has been assigned. A rescue team is on the way.";
 
-    } else if (
-      newStatus === "Arrived"
-    ) {
+    } else if (newStatus === "enroute") {
 
       title =
-        "📍 Rescue Team Has Arrived";
+        "🚑 Rescue Team En Route";
 
       message =
-        "The rescue team has arrived at the reported emergency location.";
+        "The rescue team is now en route to your location.";
 
-    } else if (
-      newStatus === "Resolved"
-    ) {
+    } else if (newStatus === "in_progress") {
+
+      title =
+        "📍 Rescue In Progress";
+
+      message =
+        "The rescue team has arrived and is responding to your emergency.";
+
+    } else if (newStatus === "resolved") {
 
       title =
         "✅ Emergency Resolved";
@@ -1698,7 +1744,6 @@ exports.onRescueStatusChanged = onDocumentUpdated(
       return null;
     }
 
-
     console.log(
       "===================================="
     );
@@ -1708,7 +1753,7 @@ exports.onRescueStatusChanged = onDocumentUpdated(
     );
 
     console.log(
-      `Report: ${reportId}`
+      `Task: ${taskId}`
     );
 
     console.log(
@@ -1727,24 +1772,99 @@ exports.onRescueStatusChanged = onDocumentUpdated(
       "===================================="
     );
 
+    // ------------------------------------------------------
+    // MIRROR STATUS ONTO manual_reports
+    //
+    // This is the piece that was missing: task status moves
+    // forward (accepted -> enroute -> in_progress -> resolved)
+    // but nothing was reflecting that back onto the original
+    // manual_reports/{reportId} doc, so the report screen's
+    // status stayed stuck on "assigned" until someone changed
+    // it manually.
+    // ------------------------------------------------------
+
+    const reportId =
+      String(
+        after.reportId ||
+        ""
+      ).trim();
+
+    if (reportId) {
+
+      const reportStatusMap = {
+
+        accepted:
+          "Assigned",
+
+        enroute:
+          "En Route",
+
+        in_progress:
+          "In Progress",
+
+        resolved:
+          "Resolved",
+      };
+
+      const reportStatus =
+        reportStatusMap[newStatus];
+
+      if (reportStatus) {
+
+        try {
+
+          await db
+            .collection("manual_reports")
+            .doc(reportId)
+            .update({
+
+              status:
+                reportStatus,
+
+              statusUpdatedAt:
+                FieldValue.serverTimestamp(),
+            });
+
+          console.log(
+            `manual_reports/${reportId}.status -> ${reportStatus}`
+          );
+
+        } catch (error) {
+
+          console.error(
+            `Failed to mirror status onto manual_reports/${reportId}:`,
+            error
+          );
+        }
+
+      }
+
+    } else {
+
+      console.log(
+        "reportId is empty on this task - skipping manual_reports mirror."
+      );
+    }
 
     if (!citizenId) {
 
       console.log(
-        "reportedBy is empty."
+        "citizenId is empty on this task."
       );
 
       return null;
     }
-
 
     await sendAndSaveNotification({
 
       userId:
         citizenId,
 
-      reportId:
-        reportId,
+      collection:
+        "citizens",
+
+      taskId:
+        taskId,
 
       recipientType:
         "citizen",
@@ -1756,7 +1876,6 @@ exports.onRescueStatusChanged = onDocumentUpdated(
         message,
     });
 
-
     return null;
   }
 );
@@ -1767,15 +1886,18 @@ exports.onRescueStatusChanged = onDocumentUpdated(
 // RESCUE NOTIFICATION HELPER
 //
 // IMPORTANT:
-// Notification history is saved in EXISTING
+// Notification history is saved in the EXISTING
 // "Notifications" collection.
 //
-// We do NOT create a lowercase notifications collection.
+// `collection` selects where the recipient's fcmToken is
+// looked up: "citizens" for citizens, "users" for rescue
+// leaders / admins.
 // ==========================================================
 
 async function sendAndSaveNotification({
   userId,
-  reportId,
+  collection,
+  taskId,
   recipientType,
   title,
   message,
@@ -1784,18 +1906,16 @@ async function sendAndSaveNotification({
   try {
 
     // ======================================================
-    // GET CITIZEN / RESCUE USER
+    // GET RECIPIENT
     // ======================================================
 
-    const citizenRef =
+    const userRef =
       db
-        .collection("citizens")
+        .collection(collection)
         .doc(userId);
 
-
-    const citizenDoc =
-      await citizenRef.get();
-
+    const userDoc =
+      await userRef.get();
 
     // ======================================================
     // SAVE NOTIFICATION IN EXISTING COLLECTION
@@ -1809,8 +1929,8 @@ async function sendAndSaveNotification({
           userId:
             userId,
 
-          reportId:
-            reportId,
+          taskId:
+            taskId,
 
           recipientType:
             recipientType,
@@ -1831,47 +1951,41 @@ async function sendAndSaveNotification({
             FieldValue.serverTimestamp(),
         });
 
-
     console.log(
       `Notification history saved: ${notificationRef.id}`
     );
 
-
     // ======================================================
-    // CITIZEN NOT FOUND
+    // RECIPIENT NOT FOUND
     // ======================================================
 
-    if (!citizenDoc.exists) {
+    if (!userDoc.exists) {
 
       console.log(
-        `Citizen/rescue user not found: ${userId}`
+        `Recipient not found in ${collection}: ${userId}`
       );
 
       return;
     }
 
-
-    const citizen =
-      citizenDoc.data();
-
+    const recipient =
+      userDoc.data();
 
     // ======================================================
     // GET FCM TOKEN
     // ======================================================
 
     const fcmToken =
-      citizen.fcmToken;
-
+      recipient.fcmToken;
 
     if (!fcmToken) {
 
       console.log(
-        `No FCM token for user: ${userId}. Notification history saved.`
+        `No FCM token for ${collection}/${userId}. Notification history saved.`
       );
 
       return;
     }
-
 
     // ======================================================
     // SEND PUSH
@@ -1893,8 +2007,8 @@ async function sendAndSaveNotification({
         notificationId:
           notificationRef.id,
 
-        reportId:
-          reportId,
+        taskId:
+          taskId,
 
         type:
           "rescue_notification",
@@ -1904,16 +2018,14 @@ async function sendAndSaveNotification({
         fcmToken,
     });
 
-
     console.log(
-      `Rescue FCM sent successfully to: ${userId}`
+      `Rescue FCM sent successfully to ${collection}/${userId}`
     );
-
 
   } catch (error) {
 
     console.error(
-      `Rescue notification error for ${userId}:`,
+      `Rescue notification error for ${collection}/${userId}:`,
       error
     );
   }

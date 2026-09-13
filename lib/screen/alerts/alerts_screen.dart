@@ -178,14 +178,31 @@ class _AlertsScreenState extends State<AlertsScreen> {
     notification.recipientType.toLowerCase();
 
     if (recipient.contains("leader")) {
-      return Colors.orange.withOpacity(0.12);
+      return Colors.orange.withOpacity(0.15);
     }
 
     if (recipient.contains("citizen")) {
-      return Colors.blue.withOpacity(0.12);
+      return Colors.blue.withOpacity(0.15);
     }
 
-    return Colors.grey.withOpacity(0.12);
+    return Colors.grey.withOpacity(0.15);
+  }
+
+  Color _getRecipientColor(
+      NotificationModel notification,
+      ) {
+    final recipient =
+    notification.recipientType.toLowerCase();
+
+    if (recipient.contains("leader")) {
+      return Colors.orange;
+    }
+
+    if (recipient.contains("citizen")) {
+      return Colors.blue;
+    }
+
+    return Colors.grey;
   }
 
   String _getRecipientName(
@@ -326,12 +343,15 @@ class _AlertsScreenState extends State<AlertsScreen> {
                 const SizedBox(height: 15),
 
                 // Alerts > 5 = compact scroll
-                  AlertsTable(
+                SizedBox(
+                  width: double.infinity,
+                  child: AlertsTable(
                     alerts: filteredAlerts,
                     onView: _viewAlert,
                     onEdit: _editAlert,
                     onDelete: _deleteAlert,
                   ),
+                ),
 
                 const SizedBox(height: 35),
 
@@ -479,7 +499,7 @@ class _AlertsScreenState extends State<AlertsScreen> {
                   padding: EdgeInsets.zero,
                   itemCount: notifications.length,
                   separatorBuilder: (context, index) {
-                    return const Divider(height: 1);
+                    return const SizedBox(height: 8);
                   },
                   itemBuilder: (context, index) {
                     return _buildNotificationItem(
@@ -492,14 +512,13 @@ class _AlertsScreenState extends State<AlertsScreen> {
           else
             Column(
               children: notifications.map((notification) {
-                return Column(
-                  children: [
-                    _buildNotificationItem(
-                      notification,
-                    ),
-                    if (notification != notifications.last)
-                      const Divider(height: 1),
-                  ],
+                return Padding(
+                  padding: const EdgeInsets.only(
+                    bottom: 8,
+                  ),
+                  child: _buildNotificationItem(
+                    notification,
+                  ),
                 );
               }).toList(),
             ),
@@ -526,10 +545,12 @@ class _AlertsScreenState extends State<AlertsScreen> {
       child: Container(
         padding: const EdgeInsets.symmetric(
           vertical: 13,
-          horizontal: 5,
+          horizontal: 10,
         ),
         decoration: BoxDecoration(
-          color: Colors.transparent,
+          color: isUnread
+              ? const Color(0xffE9F0FA)
+              : const Color(0xffF4F7FA),
           borderRadius:
           BorderRadius.circular(10),
         ),
@@ -552,6 +573,9 @@ class _AlertsScreenState extends State<AlertsScreen> {
                   notification,
                 ),
                 size: 21,
+                color: _getRecipientColor(
+                  notification,
+                ),
               ),
             ),
 
@@ -613,14 +637,15 @@ class _AlertsScreenState extends State<AlertsScreen> {
                       Container(
                         padding:
                         const EdgeInsets.symmetric(
-                          horizontal: 8,
+                          horizontal: 10,
                           vertical: 4,
                         ),
                         decoration: BoxDecoration(
-                          color: Colors.grey
-                              .withOpacity(0.08),
+                          color: _getRecipientColor(
+                            notification,
+                          ),
                           borderRadius:
-                          BorderRadius.circular(6),
+                          BorderRadius.circular(20),
                         ),
                         child: Row(
                           mainAxisSize:
@@ -637,7 +662,7 @@ class _AlertsScreenState extends State<AlertsScreen> {
                                   : Icons
                                   .person_outline,
                               size: 13,
-                              color: Colors.grey,
+                              color: Colors.white,
                             ),
                             const SizedBox(width: 4),
                             Text(
@@ -647,9 +672,9 @@ class _AlertsScreenState extends State<AlertsScreen> {
                               style:
                               const TextStyle(
                                 fontSize: 11,
-                                color: Colors.grey,
+                                color: Colors.white,
                                 fontWeight:
-                                FontWeight.w500,
+                                FontWeight.bold,
                               ),
                             ),
                           ],

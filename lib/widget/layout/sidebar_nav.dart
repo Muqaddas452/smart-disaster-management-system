@@ -13,6 +13,7 @@ const List<NavItem> kNavItems = [
   NavItem(Icons.map_rounded,                   'Live Map'),
   NavItem(Icons.fact_check_rounded,            'User Reports'),
   NavItem(Icons.local_shipping_rounded,        'Rescue Teams'),
+  NavItem(Icons.assignment_rounded, 'Rescue Tasks'),
   NavItem(Icons.people_rounded,                'Citizens'),
   NavItem(Icons.location_city_rounded,         'Affected Zones'),
   NavItem(Icons.feedback,                      "Feedback"),
