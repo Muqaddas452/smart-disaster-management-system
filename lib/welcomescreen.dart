@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart'; // import Flutter's basic UI toolkit
-import 'signupscreen.dart'; // import the Sign Up screen file
-import 'login_screen.dart'; // import the Login screen file
+import 'package:smartdisaster/role_selection_screen.dart';
+import '/../../citizen_screens/signupscreen.dart'; // import the Sign Up screen file
+import 'citizen_screens/login_screen.dart'; // import the Login screen file
+import 'rescue_team_screens//rescue_role_selection_screen.dart'; // import the Rescue Role Selection screen file
 
 class WelcomeScreen extends StatelessWidget {
   // this screen never changes on its own (no setState needed), so it's Stateless
@@ -116,7 +118,7 @@ class WelcomeScreen extends StatelessWidget {
               Navigator.push(
                 // Navigator.push moves to a new screen and keeps this one in memory
                 context, // tells Flutter which screen we are moving from
-                MaterialPageRoute(builder: (context) => const SignUpScreen()), // the new screen to open
+                MaterialPageRoute(builder: (context) => const RoleSelectionScreen()), // the new screen to open
               );
             },
             style: ElevatedButton.styleFrom(
@@ -146,7 +148,7 @@ class WelcomeScreen extends StatelessWidget {
               // this code runs when user taps the Login button
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => const LoginScreen()), // open Login screen
+                MaterialPageRoute(builder: (context) =>  LoginScreen()), // open Login screen
               );
             },
             style: OutlinedButton.styleFrom(
@@ -161,10 +163,13 @@ class WelcomeScreen extends StatelessWidget {
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
             ),
           ),
-    )
-      ] );
+        ),
+
+        // ---------------- Rescue Team - small link style ----------------
+        // instead of a big button, this is just a small clickable text
+
+      ],
+    );
   }
-
 }
-
 

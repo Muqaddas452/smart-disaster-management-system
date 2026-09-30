@@ -4,17 +4,21 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'services/map_service.dart';
+import 'package:smartdisaster/services/map_service.dart';
 import 'profile_screen.dart';
 import 'edit_emergency_contacts.dart';
 import 'edit_personal_details.dart';
-import 'widgets/map/polygon_layer.dart';
-import 'models/polygon_model.dart';
+import 'package:smartdisaster/widgets/map/polygon_layer.dart';
+import 'package:smartdisaster/models/polygon_model.dart';
 import 'safety_tips_screen.dart';
 import 'report_screen.dart';
 import 'alert_screen.dart';
+import 'package:smartdisaster/database/citizen_dao.dart';
+import 'package:smartdisaster/database/db_Helper.dart';
 import 'map_screen.dart';
-import 'widgets/map/disaster_map.dart';
+import 'package:smartdisaster/widgets/map/disaster_map.dart';
+import 'package:smartdisaster/citizen_screens/all_reports_screen.dart';
+import 'package:smartdisaster/citizen_screens/report_details_screen.dart';
 import 'profile_screen.dart';
 
 class AppColors {
@@ -197,11 +201,17 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: _SafetyTipsButton(),
                   ),
                   const SizedBox(height: 20),
-                  const Padding(
+                  Padding(
                     padding: EdgeInsets.symmetric(horizontal: 16),
                     child: _SectionHeader(
                       title: 'My Reports Status',
                       actionText: 'View All',
+                      onTap:() {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder:(_) => const AllReportsScreen()),
+                        );
+                      },
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -217,77 +227,52 @@ class _HomeScreenState extends State<HomeScreen> {
                           .limit(3)
                           .snapshots(),
                       builder: (context, snapshot) {
-                        if (snapshot.connectionState ==
-                            ConnectionState.waiting) {
+                        if (snapshot.connectionState == ConnectionState.waiting) {
                           return const Padding(
                             padding: EdgeInsets.symmetric(vertical: 12),
-                            child: Center(
-                                child: CircularProgressIndicator(
-                                    strokeWidth: 2)),
+                            child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
                           );
                         }
 
                         if (snapshot.hasError) {
-                          return Container(
-                            padding: const EdgeInsets.all(14),
-                            decoration: BoxDecoration(
-                              color: AppColors.white,
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Text(
-                              'Reports error: ${snapshot.error}',
-                              style: const TextStyle(
-                                  fontSize: 11, color: Colors.red),
-                            ),
-                          );
+                          return Text('Error: ${snapshot.error}', style: const TextStyle(color: Colors.red));
                         }
 
                         final docs = snapshot.data?.docs ?? [];
 
                         if (docs.isEmpty) {
-                          return Container(
-                            padding: const EdgeInsets.all(14),
-                            decoration: BoxDecoration(
-                              color: AppColors.white,
-                              borderRadius: BorderRadius.circular(10),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.04),
-                                  blurRadius: 6,
-                                  offset: const Offset(0, 1),
-                                ),
-                              ],
-                            ),
-                            child: const Text(
-                              'No reports submitted yet.',
-                              style: TextStyle(
-                                  fontSize: 12, color: AppColors.textGrey),
-                            ),
-                          );
+                          return const Text('No reports submitted yet.', style: TextStyle(color: Colors.grey));
                         }
 
                         return Column(
                           children: docs.map((doc) {
                             final data = doc.data() as Map<String, dynamic>;
 
-                            final String description =
-                                data['description'] ?? 'Emergency Report';
+                            final String description = data['description'] ?? 'Emergency Report';
                             final String status = data['status'] ?? 'Pending';
-                            final bool isVerified =
-                            status.toLowerCase().contains('verified');
+                            final bool isVerified = status.toLowerCase().contains('verified');
 
                             final Timestamp? ts = data['timestamp'];
-                            final String timeAgo =
-                            ts != null ? _timeAgo(ts.toDate()) : '';
+                            final String timeAgo = ts != null ? _timeAgo(ts.toDate()) : '';
 
                             return Padding(
                               padding: const EdgeInsets.only(bottom: 10),
-                              child: _ReportCard(
-                                title: description.length > 40
-                                    ? '${description.substring(0, 40)}...'
-                                    : description,
-                                subtitle: '$status${timeAgo.isNotEmpty ? ' • $timeAgo' : ''}',
-                                isVerified: isVerified,
+                              child: GestureDetector(
+                                onTap: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => ReportDetailScreen(reportId: doc.id),
+                                    ),
+                                  );
+                                },
+                                child: _ReportCard(
+                                  title: description.length > 40
+                                      ? '${description.substring(0, 40)}...'
+                                      : description,
+                                  subtitle: '$status${timeAgo.isNotEmpty ? ' • $timeAgo' : ''}',
+                                  isVerified: isVerified,
+                                ),
                               ),
                             );
                           }).toList(),
@@ -701,90 +686,90 @@ class _LiveMapCardState extends State<_LiveMapCard> {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-        onTap: () {
-          // Jab user is card par click karega toh DisasterMap screen khul jaye gi
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => const Scaffold(
-                body: SafeArea(
-                  child: DisasterMap(isAdmin: false), // Yeh aapki filtered map screen hai
-                ),
+      onTap: () {
+        // Jab user is card par click karega toh DisasterMap screen khul jaye gi
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => Scaffold(
+              body: SafeArea(
+                child: DisasterMap(isAdmin: false), // Yeh aapki filtered map screen hai
               ),
             ),
-          );
-        },
-    child: Container(
-      decoration: BoxDecoration(
-        color: AppColors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
           ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text('Live Disaster Map',
-                    style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.textDark)),
-                Row(
-                  children: [
-                    Container(
-                      width: 8,
-                      height: 8,
-                      decoration: const BoxDecoration(
-                          color: AppColors.redLive, shape: BoxShape.circle),
-                    ),
-                    const SizedBox(width: 5),
-                    const Text('LIVE',
-                        style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.redLive)),
-                  ],
-                ),
-              ],
+        );
+      },
+      child: Container(
+        decoration: BoxDecoration(
+          color: AppColors.white,
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.05),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
             ),
-          ),
-          ClipRRect(
-            borderRadius: const BorderRadius.only(
-              bottomLeft: Radius.circular(12),
-              bottomRight: Radius.circular(12),
-            ),
-            child: SizedBox(
-              height: 200,
-              width: double.infinity,
-              child: AbsorbPointer(
-                // AbsorbPointer rakha hai taake chhota map scroll na ho, sirf click ho kar redirect kare
-                child: GoogleMap(
-                  initialCameraPosition: const CameraPosition(
-                    target: LatLng(32.5865, 73.4918), // Aapki default location (e.g. Mandi Bahauddin)
-                    zoom: 13,
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Live Disaster Map',
+                      style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.textDark)),
+                  Row(
+                    children: [
+                      Container(
+                        width: 8,
+                        height: 8,
+                        decoration: const BoxDecoration(
+                            color: AppColors.redLive, shape: BoxShape.circle),
+                      ),
+                      const SizedBox(width: 5),
+                      const Text('LIVE',
+                          style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.redLive)),
+                    ],
                   ),
-                  polygons: _polygons, // Firestore se aane walay affected zones yahan show honge
-                  zoomControlsEnabled: false,
-                  scrollGesturesEnabled: false,
-                  myLocationButtonEnabled: false,
-                  mapToolbarEnabled: false,
+                ],
+              ),
+            ),
+            ClipRRect(
+              borderRadius: const BorderRadius.only(
+                bottomLeft: Radius.circular(12),
+                bottomRight: Radius.circular(12),
+              ),
+              child: SizedBox(
+                height: 200,
+                width: double.infinity,
+                child: AbsorbPointer(
+                  // AbsorbPointer rakha hai taake chhota map scroll na ho, sirf click ho kar redirect kare
+                  child: GoogleMap(
+                    initialCameraPosition: const CameraPosition(
+                      target: LatLng(32.5865, 73.4918), // Aapki default location (e.g. Mandi Bahauddin)
+                      zoom: 13,
+                    ),
+                    polygons: _polygons, // Firestore se aane walay affected zones yahan show honge
+                    zoomControlsEnabled: false,
+                    scrollGesturesEnabled: false,
+                    myLocationButtonEnabled: false,
+                    mapToolbarEnabled: false,
+                  ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
-    ),
     );
   }
 }
@@ -922,8 +907,9 @@ class _SafetyTipsButton extends StatelessWidget {
 class _SectionHeader extends StatelessWidget {
   final String title;
   final String? actionText;
+  final VoidCallback? onTap;
 
-  const _SectionHeader({required this.title, this.actionText});
+  const _SectionHeader({required this.title, this.actionText, this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -936,16 +922,29 @@ class _SectionHeader extends StatelessWidget {
                 fontWeight: FontWeight.w800,
                 color: AppColors.textDark)),
         if (actionText != null)
-          Text(actionText!,
-              style: const TextStyle(
-                  fontSize: 13,
+          GestureDetector(
+            onTap: onTap,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(actionText!,
+                    style: const TextStyle(
+                        fontSize: 13,
+                        color: AppColors.primaryLight,
+                        fontWeight: FontWeight.w600)),
+                const SizedBox(width: 4),
+                const Icon(
+                  Icons.chevron_right,
+                  size: 16,
                   color: AppColors.primaryLight,
-                  fontWeight: FontWeight.w600)),
+                ),
+              ],
+            ),
+          ),
       ],
     );
   }
 }
-
 class _ReportCard extends StatelessWidget {
   final String title;
   final String subtitle;

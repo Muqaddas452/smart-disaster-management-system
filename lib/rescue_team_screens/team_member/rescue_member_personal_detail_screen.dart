@@ -1,0 +1,257 @@
+import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:smartdisaster/database/rescue_dao.dart';
+import 'package:smartdisaster/database/db_Helper.dart';
+
+class RescueMemberPersonalDetailsScreen extends StatelessWidget {
+  const RescueMemberPersonalDetailsScreen({super.key});
+
+  static const Color kGreen = Color(0xFF1B5E38);
+  static const Color kLightBlue = Color(0xFFE8F4FD);
+
+  @override
+  Widget build(BuildContext context) {
+    final String? uid = FirebaseAuth.instance.currentUser?.uid;
+
+    return Scaffold(
+      backgroundColor: const Color(0xFFF5F5E8),
+      appBar: AppBar(
+        backgroundColor: kGreen,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: const Text('Member Personal Details',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
+        centerTitle: true,
+      ),
+      body: uid == null
+          ? const Center(child: Text('User not logged in'))
+          : StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+        stream: FirebaseFirestore.instance
+            .collection('rescueTeamUsers')
+            .doc(uid)
+            .snapshots(includeMetadataChanges: true),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
+            return const Center(child: CircularProgressIndicator(color: kGreen));
+          }
+          if (!snapshot.hasData || !snapshot.data!.exists) {
+            return const Center(child: Text('Profile data not found'));
+          }
+
+          final data = snapshot.data!.data() ?? {};
+          final bool isFromCache = snapshot.data?.metadata.isFromCache ?? false;
+
+          final String name = data['name'] ?? data['fullName'] ?? '-';
+          final String email = data['email'] ?? '-';
+          final String phone = data['phone'] ?? data['phoneNumber'] ?? '-';
+          final String emergencyPhone = data['emergencyPhone'] ?? '-';
+          final String personalAddress = data['personalAddress'] ?? data['address'] ?? '-';
+          final String bloodGroup = data['bloodGroup'] ?? '-';
+          final String specialization = data['specialization'] ?? '-';
+
+          final String rawTeamName = data['teamName'] ?? data['team_name'] ?? '';
+          final String teamId = data['teamId'] ?? data['team_id'] ?? '-';
+          final String officialAddress = data['officialAddress'] ?? '-';
+          final String role = data['role'] ?? 'rescue_member';
+          final String roleLabel =
+          role.contains('leader') ? 'Team Leader' : 'Rescue Member';
+
+          String joinedDate = '-';
+          final createdAt = data['createdAt'];
+          if (createdAt is Timestamp) {
+            joinedDate = _formatDate(createdAt.toDate());
+          }
+
+          return FutureBuilder<String>(
+            future: _resolveTeamName(rawTeamName, teamId),
+            builder: (context, teamNameSnapshot) {
+              final String teamName = teamNameSnapshot.data ?? (rawTeamName.isNotEmpty ? rawTeamName : '-');
+
+              final bool profileIncomplete =
+                  name == '-' || phone == '-' || personalAddress == '-' || teamName == '-';
+
+              return SingleChildScrollView(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (isFromCache)
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.amber.shade100,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.cloud_off, size: 16, color: Colors.amber.shade900),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Offline mode: Viewing cached profile data',
+                              style: TextStyle(fontSize: 11, color: Colors.amber.shade900, fontWeight: FontWeight.bold),
+                            ),
+                          ],
+                        ),
+                      ),
+                    if (profileIncomplete)
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 16),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.amber.shade50,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Colors.amber.shade200),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.info_outline, size: 18, color: Colors.amber.shade800),
+                            const SizedBox(width: 8),
+                            const Expanded(
+                              child: Text('Your profile is incomplete. Some details below are missing.',
+                                  style: TextStyle(fontSize: 12, color: Colors.black87)),
+                            ),
+                          ],
+                        ),
+                      ),
+                    const Center(
+                      child: CircleAvatar(
+                        radius: 44,
+                        backgroundColor: Color(0xFF2C3E50),
+                        child: Icon(Icons.person, size: 46, color: Colors.white54),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+
+                    _sectionLabel('YOUR DETAILS'),
+                    const SizedBox(height: 10),
+                    _tile(Icons.badge_outlined, 'FULL NAME', name),
+                    const SizedBox(height: 10),
+                    _tile(Icons.email_outlined, 'EMAIL', email, trailing: Icons.lock_outline),
+                    const SizedBox(height: 10),
+                    _tile(Icons.phone_outlined, 'PHONE NUMBER', phone),
+                    const SizedBox(height: 10),
+                    _tile(Icons.emergency_outlined, 'EMERGENCY CONTACT', emergencyPhone),
+                    const SizedBox(height: 10),
+                    _tile(Icons.home_outlined, 'PERSONAL ADDRESS', personalAddress),
+                    const SizedBox(height: 10),
+                    _tile(Icons.star_outline, 'SPECIALIZATION', specialization,
+                        boldValue: true, maxLines: 3),
+                    const SizedBox(height: 10),
+                    _tile(Icons.bloodtype_outlined, 'BLOOD GROUP', bloodGroup,
+                        boldValue: true),
+
+                    const SizedBox(height: 26),
+
+                    _sectionLabel('TEAM DETAILS'),
+                    const SizedBox(height: 10),
+                    _tile(Icons.group_outlined, 'TEAM NAME', teamName),
+                    const SizedBox(height: 10),
+                    _tile(Icons.business_outlined, 'OFFICIAL ADDRESS', officialAddress),
+                    const SizedBox(height: 10),
+                    _tile(Icons.tag, 'TEAM ID', teamId, boldValue: true, maxLines: 2),
+                    const SizedBox(height: 10),
+                    Row(children: [
+                      Expanded(
+                          child: _tile(Icons.calendar_today_outlined, 'JOINED DATE', joinedDate,
+                              boldValue: true)),
+                      const SizedBox(width: 10),
+                      Expanded(
+                          child: _tile(Icons.shield_outlined, 'ROLE', roleLabel,
+                              boldValue: true)),
+                    ]),
+                    const SizedBox(height: 20),
+                  ],
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+
+  static Future<String> _resolveTeamName(String userDocTeamName, String teamId) async {
+    if (userDocTeamName.trim().isNotEmpty && userDocTeamName != '-') {
+      return userDocTeamName;
+    }
+    if (teamId.isEmpty || teamId == '-') {
+      return '-';
+    }
+    try {
+      final teamDoc = await FirebaseFirestore.instance
+          .collection('rescueTeams')
+          .doc(teamId)
+          .get(const GetOptions(source: Source.cache));
+      if (teamDoc.exists && teamDoc.data() != null) {
+        return teamDoc.data()!['teamName'] ?? teamDoc.data()!['name'] ?? '-';
+      }
+      final serverTeamDoc = await FirebaseFirestore.instance.collection('rescueTeams').doc(teamId).get();
+      if (serverTeamDoc.exists && serverTeamDoc.data() != null) {
+        return serverTeamDoc.data()!['teamName'] ?? serverTeamDoc.data()!['name'] ?? '-';
+      }
+    } catch (_) {}
+    return '-';
+  }
+
+  static String _formatDate(DateTime dt) {
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+    ];
+    final day = dt.day.toString().padLeft(2, '0');
+    return '$day ${months[dt.month - 1]} ${dt.year}';
+  }
+
+  Widget _sectionLabel(String label) {
+    return Text(label,
+        style: const TextStyle(
+            fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black45, letterSpacing: 1.4));
+  }
+
+  Widget _tile(IconData icon, String label, String value,
+      {IconData? trailing, bool boldValue = false, int maxLines = 2}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: const BoxDecoration(shape: BoxShape.circle, color: kLightBlue),
+            child: Icon(icon, size: 20, color: Colors.black54),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(label,
+                  style: const TextStyle(
+                      fontSize: 10,
+                      color: Colors.black45,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 0.8)),
+              const SizedBox(height: 3),
+              Text(value,
+                  maxLines: maxLines,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      fontSize: 14,
+                      color: Colors.black87,
+                      fontWeight: boldValue ? FontWeight.bold : FontWeight.normal)),
+            ]),
+          ),
+          if (trailing != null) Icon(trailing, size: 20, color: Colors.black38),
+        ],
+      ),
+    );
+  }
+}

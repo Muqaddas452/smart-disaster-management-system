@@ -80,10 +80,14 @@ class AuthService {
         return;
       }
 
-      final String role = authIndexDoc.get('role'); // 'citizen', 'rescue_team', or 'admin'
+      final String role = authIndexDoc.get('role'); // 'citizen', 'rescue_team'/'rescue_leader'/'rescue_member', or 'admin'
 
       // Step C: handle each role differently
-      if (role == 'rescue_team') {
+      // FIXED: this used to only check role == 'rescue_team', so a
+      // 'rescue_leader' or 'rescue_member' account (the actual roles saved
+      // during rescue registration) matched NONE of these branches — the
+      // function silently returned with no redirect and no error message.
+      if (role == 'rescue_team' || role == 'rescue_leader' || role == 'rescue_member') {
         _showSnackBar(
           context,
           "This is a rescue team account. Please use the Rescue Team login.",
@@ -111,6 +115,11 @@ class AuthService {
             Navigator.pushReplacementNamed(context, '/profileCompletion');
           }
         }
+      } else {
+        // Safety net: unknown/unhandled role — previously this silently did
+        // nothing, leaving the user signed in with no screen change.
+        _showSnackBar(context, "Account role not recognized. Please contact support.", Colors.red);
+        await _auth.signOut();
       }
     } on FirebaseAuthException catch (e) {
       _showSnackBar(context, e.message ?? "Login failed", Colors.red);

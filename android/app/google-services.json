@@ -99,6 +99,25 @@
           "other_platform_oauth_client": []
         }
       }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:537675524238:android:00fbc0f9115286214201df",
+        "android_client_info": {
+          "package_name": "com.fyp.smartdisaster.management"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCG3sI8DEdenv63MMU6qOFQGmLJhmk20Zc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
     }
   ],
   "configuration_version": "1"

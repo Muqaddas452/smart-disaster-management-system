@@ -1,12 +1,22 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:smartdisaster/notification_settings_screen.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'notification_settings_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'edit_emergency_contacts.dart';
 import 'edit_personal_details.dart';
 import 'login_screen.dart';
 import 'feedback_screen.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:flutter/services.dart'; //for clipboard
+
+// ── OFFLINE SUPPORT ────────────────────────────────────────────────
+// Adjust these two import paths to match where db_helper.dart and
+// citizen_dao.dart actually live in your project.
+import 'package:smartdisaster/database//db_helper.dart';
+import 'package:smartdisaster/database/citizen_dao.dart';
 
 class ViewProfileScreen extends StatefulWidget {
   const ViewProfileScreen({super.key});
@@ -17,6 +27,125 @@ class ViewProfileScreen extends StatefulWidget {
 
 class _ViewProfileScreenState extends State<ViewProfileScreen> {
   final String _uid = FirebaseAuth.instance.currentUser!.uid;
+
+  bool _isOffline = false;
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
+
+  @override
+  void initState() {
+    super.initState();
+    _initConnectivity();
+  }
+
+  Future<void> _initConnectivity() async {
+    final result = await Connectivity().checkConnectivity();
+    if (mounted) {
+      setState(() => _isOffline = result.contains(ConnectivityResult.none));
+    }
+    _connectivitySub = Connectivity().onConnectivityChanged.listen((result) {
+      if (mounted) {
+        setState(() => _isOffline = result.contains(ConnectivityResult.none));
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _connectivitySub?.cancel();
+    super.dispose();
+  }
+
+  void _showShareOptionsSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (BuildContext context) {
+        return Container(
+          padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Share SDMS',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 15),
+              ListTile(
+                leading: const Icon(Icons.chat, color: Colors.green),
+                title: const Text('WhatsApp'),
+                onTap: () {
+                  Navigator.pop(context);
+                  Share.share('Stay safe with Smart Disaster Management System (SDMS)! Download now.');
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.copy, color: Colors.blue),
+                title: const Text('Copy Link'),
+                onTap: () {
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Link copied to clipboard!')),
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.more_horiz, color: Colors.grey),
+                title: const Text('More Options...'),
+                onTap: () {
+                  Navigator.pop(context);
+                  Share.share('Stay safe with Smart Disaster Management System (SDMS)!');
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+  String shareMessage =
+      'Stay safe and report disasters instantly with Smart Disaster Management System (SDMS)! Download the app now.';
+// 1. WhatsApp par share karne ke liye
+  Future<void> _shareToWhatsApp() async {
+    await Share.share('Check out SDMS app: $shareMessage');
+  }
+
+// 2. Link / Text Copy karne ke liye
+  void _copyLinkToClipboard(BuildContext context) {
+    Clipboard.setData(ClipboardData(text: shareMessage));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Link copied to clipboard!')),
+    );
+  }
+
+// 3. More Options (System Share Sheet)
+  Future<void> _shareViaSystem() async {
+    await Share.share(
+      shareMessage,
+      subject: 'Smart Disaster Management System',
+    );
+  }
+
+  // Cached profile map ko StreamBuilder wale `data` map jaisi hi shape
+  // mein la kar deta hai, taake neeche ka UI aur navigation bilkul
+  // waisa hi kaam kare jaisa online snapshot ke sath karta hai.
+  Map<String, dynamic> _cachedToDataMap(Map<String, dynamic> cached) {
+    return {
+      'name': cached['name'] ?? '',
+      'email': cached['email'] ?? '',
+      'phone': cached['phone'] ?? '',
+      'address': cached['address'] ?? '',
+      'emergencyContactName': cached['emergencyContactName'] ?? '',
+      'emergencyContactPhone': cached['emergencyContactPhone'] ?? '',
+      'emergencyContactRelation': cached['emergencyContactRelation'] ?? '',
+      // Note: gender aur birthday/dob DBHelper ke cached_citizen_profile
+      // table mein cache nahi hote (wo columns table mein nahi hain), is
+      // liye offline mode mein PersonalDetailsScreen inke liye apne
+      // already-existing defaults ('Male' / '01/01/2000') dikhayega.
+    };
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -39,180 +168,252 @@ class _ViewProfileScreenState extends State<ViewProfileScreen> {
         ),
         centerTitle: true,
       ),
-      body: StreamBuilder<DocumentSnapshot>(
-        stream: FirebaseFirestore.instance
-            .collection('citizens')
-            .doc(_uid)
-            .snapshots(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(
-              child: CircularProgressIndicator(color: Color(0xFF1B5E38)),
-            );
-          }
+      body: _isOffline ? _buildOfflineBody(context) : _buildOnlineBody(context),
+    );
+  }
 
-          if (snapshot.hasError || !snapshot.hasData || !snapshot.data!.exists) {
-            return const Center(child: Text('Unable to load profile.'));
-          }
+  Widget _buildOfflineBody(BuildContext context) {
+    return FutureBuilder<Map<String, dynamic>?>(
+      future: CitizenDao.getCachedProfile(_uid),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(
+            child: CircularProgressIndicator(color: Color(0xFF1B5E38)),
+          );
+        }
 
-          final data = snapshot.data!.data() as Map<String, dynamic>;
-          final String name = data['name'] ?? 'User Name';
-          final String email = data['email'] ?? 'user@gmail.com';
+        final cached = snapshot.data;
+        if (cached == null) {
+          return const Center(child: Text('Unable to load profile.'));
+        }
 
-          return SingleChildScrollView(
-            child: Column(
-              children: [
-                // Top Header Section
-                Container(
-                  width: double.infinity,
-                  decoration: const BoxDecoration(
-                    color: Color(0xFF1B5E38),
-                    borderRadius: BorderRadius.only(
-                      bottomLeft: Radius.circular(30),
-                      bottomRight: Radius.circular(30),
-                    ),
-                  ),
-                  padding: const EdgeInsets.only(bottom: 30, top: 10),
-                  child: Column(
-                    children: [
-                      CircleAvatar(
-                        radius: 46,
-                        backgroundColor: Colors.white,
-                        child: CircleAvatar(
-                          radius: 44,
-                          backgroundColor: Colors.grey.shade300,
-                          child: const Icon(Icons.person, size: 50, color: Colors.grey),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        name,
-                        style: const TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        email,
-                        style: const TextStyle(
-                          fontSize: 14,
-                          color: Colors.white70,
-                        ),
-                      ),
-                    ],
-                  ),
+        final data = _cachedToDataMap(cached);
+        final String name = data['name']!.isNotEmpty ? data['name']! : 'User Name';
+        final String email = data['email']!.isNotEmpty ? data['email']! : 'user@gmail.com';
+
+        return SingleChildScrollView(
+          child: Column(
+            children: [
+              Container(
+                width: double.infinity,
+                color: const Color(0xFFFFF3E0),
+                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+                child: const Text(
+                  'Offline — showing last saved profile',
+                  style: TextStyle(fontSize: 11, color: Color(0xFFE65100), fontStyle: FontStyle.italic),
+                  textAlign: TextAlign.center,
                 ),
+              ),
+              _buildProfileBody(context, data, name, email),
+            ],
+          ),
+        );
+      },
+    );
+  }
 
-                const SizedBox(height: 20),
+  Widget _buildOnlineBody(BuildContext context) {
+    return StreamBuilder<DocumentSnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('citizens')
+          .doc(_uid)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(
+            child: CircularProgressIndicator(color: Color(0xFF1B5E38)),
+          );
+        }
 
-                // Options List Section matching screenshot 1000140975.jpg
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(20),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.grey.withOpacity(0.1),
-                          spreadRadius: 2,
-                          blurRadius: 10,
-                          offset: const Offset(0, 3),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      children: [
-                        // 1. Personal Details Card
-                        _buildProfileOption(
-                          icon: Icons.person_outline,
-                          title: 'Personal Details',
-                          subtitle: 'View your profile information',
-                          onTap: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => PersonalDetailsScreen(userData: data),
-                              ),
-                            );
-                          },
-                        ),
-                        _buildDivider(),
+        if (snapshot.hasError || !snapshot.hasData || !snapshot.data!.exists) {
+          return const Center(child: Text('Unable to load profile.'));
+        }
 
-                        // 2. Emergency Contacts Card
-                        _buildProfileOption(
-                          icon: Icons.emergency_outlined,
-                          title: 'Emergency Contacts',
-                          subtitle: 'Personal emergency & rescue helplines',
-                          onTap: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => EmergencyContactsScreen(userData: data),
-                              ),
-                            );
-                          },
-                        ),
-                        _buildDivider(),
+        final data = snapshot.data!.data() as Map<String, dynamic>;
+        final String name = data['name'] ?? 'User Name';
+        final String email = data['email'] ?? 'user@gmail.com';
 
-                        // 3. Settings Card
-                        _buildProfileOption(
-                          icon: Icons.settings_outlined,
-                          title: 'Settings',
-                          subtitle: 'Edit profile & notification preferences',
-                          onTap: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => const SettingsMainScreen(),
-                              ),
-                            );
-                          },
-                        ),
-                        _buildDivider(),
+        // Cache silently for offline use — fire and forget, UI unaffected.
+        CitizenDao.cacheProfile(
+          uid: _uid,
+          name: name,
+          email: email,
+          phone: data['phone'] ?? '',
+          address: data['address'] ?? '',
+          emergencyContactName: data['emergencyContactName'] ?? '',
+          emergencyContactPhone: data['emergencyContactPhone'] ?? '',
+          emergencyContactRelation: data['emergencyContactRelation'] ?? '',
+        );
 
-                        // 4. Feedback Card
-                        _buildProfileOption(
-                          icon: Icons.feedback_outlined,
-                          title: 'Feedback',
-                          subtitle: 'Send your valuable feedback',
-                          onTap: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => const FeedbackScreen(),
-                              ),
-                            );
-                          },
-                        ),
-                        _buildDivider(),
+        return SingleChildScrollView(
+          child: _buildProfileBody(context, data, name, email),
+        );
+      },
+    );
+  }
 
-                        // 5. Logout Card
-                        _buildProfileOption(
-                          icon: Icons.logout,
-                          title: 'Logout',
-                          subtitle: 'Sign out from your account',
-                          textColor: Colors.red,
-                          iconColor: Colors.red,
-                          onTap: () async {
-                            await FirebaseAuth.instance.signOut();
-                            if (context.mounted) {
-                              Navigator.of(context).popUntil((route) => route.isFirst);
-                            }
-                          },
-                        ),
-                      ],
-                    ),
-                  ),
+  Widget _buildProfileBody(
+      BuildContext context, Map<String, dynamic> data, String name, String email) {
+    return Column(
+      children: [
+        // Top Header Section
+        Container(
+          width: double.infinity,
+          decoration: const BoxDecoration(
+            color: Color(0xFF1B5E38),
+            borderRadius: BorderRadius.only(
+              bottomLeft: Radius.circular(30),
+              bottomRight: Radius.circular(30),
+            ),
+          ),
+          padding: const EdgeInsets.only(bottom: 30, top: 10),
+          child: Column(
+            children: [
+              CircleAvatar(
+                radius: 46,
+                backgroundColor: Colors.white,
+                child: CircleAvatar(
+                  radius: 44,
+                  backgroundColor: Colors.grey.shade300,
+                  child: const Icon(Icons.person, size: 50, color: Colors.grey),
                 ),
-                const SizedBox(height: 30),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                name,
+                style: const TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                email,
+                style: const TextStyle(
+                  fontSize: 14,
+                  color: Colors.white70,
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        const SizedBox(height: 20),
+
+        // Options List Section
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16.0),
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.grey.withOpacity(0.1),
+                  spreadRadius: 2,
+                  blurRadius: 10,
+                  offset: const Offset(0, 3),
+                ),
               ],
             ),
-          );
-        },
-      ),
+            child: Column(
+              children: [
+                // 1. Personal Details Card
+                _buildProfileOption(
+                  icon: Icons.person_outline,
+                  title: 'Personal Details',
+                  subtitle: 'View your profile information',
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => PersonalDetailsScreen(userData: data),
+                      ),
+                    );
+                  },
+                ),
+                _buildDivider(),
+
+                // 2. Emergency Contacts Card
+                _buildProfileOption(
+                  icon: Icons.emergency_outlined,
+                  title: 'Emergency Contacts',
+                  subtitle: 'Personal emergency & rescue helplines',
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => EmergencyContactsScreen(userData: data),
+                      ),
+                    );
+                  },
+                ),
+                _buildDivider(),
+
+                // 3. Settings Card
+                _buildProfileOption(
+                  icon: Icons.settings_outlined,
+                  title: 'Settings',
+                  subtitle: 'Edit profile & notification preferences',
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const SettingsMainScreen(),
+                      ),
+                    );
+                  },
+                ),
+                _buildDivider(),
+
+                // 4. Feedback Card
+                _buildProfileOption(
+                  icon: Icons.feedback_outlined,
+                  title: 'Feedback',
+                  subtitle: 'Send your valuable feedback',
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const FeedbackScreen(),
+                      ),
+                    );
+                  },
+                ),
+                _buildDivider(),
+
+                // ── Share SDMS Card ──
+                _buildProfileOption(
+                  icon: Icons.share_outlined,
+                  title: 'Share SDMS',
+                  subtitle: 'Share app with friends and emergency contacts',
+                  onTap: () {
+                    _showShareOptionsSheet(context);
+                  },
+                ),
+                _buildDivider(),
+
+                // 5. Logout Card
+                _buildProfileOption(
+                  icon: Icons.logout,
+                  title: 'Logout',
+                  subtitle: 'Sign out from your account',
+                  textColor: Colors.red,
+                  iconColor: Colors.red,
+                  onTap: () async {
+                    await FirebaseAuth.instance.signOut();
+                    if (context.mounted) {
+                      Navigator.of(context).popUntil((route) => route.isFirst);
+                    }
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 30),
+      ],
     );
   }
 

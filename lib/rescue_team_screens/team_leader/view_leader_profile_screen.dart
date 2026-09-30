@@ -1,0 +1,257 @@
+import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'rescue_leader_personal_detail_screen.dart';
+import 'rescue_leader_settings_screen.dart';
+import 'package:smartdisaster/citizen_screens/feedback_screen.dart';
+import 'package:smartdisaster/citizen_screens/feedback_success_screen.dart';
+import 'package:smartdisaster/database/rescue_dao.dart';
+import 'package:smartdisaster/database/db_Helper.dart';
+// NEW — needed so logout can always land on a screen that reacts
+// correctly to the signed-out state, no matter how this screen was
+// reached (see _confirmLogout below for why this replaces the old
+// popUntil approach).
+import 'package:smartdisaster/main.dart';
+import 'package:smartdisaster/services/auth_service.dart';
+
+class RescueProfileScreen extends StatelessWidget {
+  const RescueProfileScreen({super.key});
+
+  static const Color kGreen = Color(0xFF1B5E38);
+
+  @override
+  Widget build(BuildContext context) {
+    final String? uid = FirebaseAuth.instance.currentUser?.uid;
+
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: Column(
+        children: [
+          Expanded(
+            child: uid == null
+                ? const Center(child: Text('User not logged in'))
+                : StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+              stream: FirebaseFirestore.instance
+                  .collection('rescueTeamUsers')
+                  .doc(uid)
+                  .snapshots(includeMetadataChanges: true),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
+                  return const Center(child: CircularProgressIndicator(color: Colors.white));
+                }
+                final data = snapshot.data?.data() ?? {};
+                final String name = (data['name'] ?? '').toString().trim().isNotEmpty
+                    ? data['name']
+                    : 'Rescue Leader';
+                final String email = data['email'] ?? FirebaseAuth.instance.currentUser?.email ?? '';
+                final String? photoUrl = data['photoUrl'];
+
+                return CustomScrollView(
+                  slivers: [
+                    SliverToBoxAdapter(child: _header(name, email, photoUrl)),
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 24, 16, 16),
+                        child: Column(
+                          children: [
+                            _menuTile(
+                              context,
+                              icon: Icons.person_outline,
+                              title: 'Personal Details',
+                              subtitle: 'View your & team profile information',
+                              onTap: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                    builder: (_) => const RescuePersonalDetailsScreen()),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            _menuTile(
+                              context,
+                              icon: Icons.settings_outlined,
+                              title: 'Settings',
+                              subtitle: 'Edit profile & notification preferences',
+                              onTap: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(builder: (_) => const RescueSettingsScreen(isLeader: true)),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            _menuTile(
+                              context,
+                              icon: Icons.feedback_outlined,
+                              title: 'Feedback',
+                              subtitle: 'Send your valuable feedback',
+                              onTap: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(builder: (_) => const FeedbackScreen()),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            _menuTile(
+                              context,
+                              icon: Icons.logout,
+                              title: 'Logout',
+                              subtitle: 'Sign out from your account',
+                              isDestructive: true,
+                              onTap: () => _confirmLogout(context),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _header(String name, String email, String? photoUrl) {
+    return Container(
+      width: double.infinity,
+      decoration: const BoxDecoration(
+        color: kGreen,
+        borderRadius: BorderRadius.only(
+          bottomLeft: Radius.circular(32),
+          bottomRight: Radius.circular(32),
+        ),
+      ),
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 28),
+          child: Column(
+            children: [
+              CircleAvatar(
+                radius: 44,
+                backgroundColor: Colors.white24,
+                backgroundImage: (photoUrl != null && photoUrl.isNotEmpty)
+                    ? NetworkImage(photoUrl)
+                    : null,
+                child: (photoUrl == null || photoUrl.isEmpty)
+                    ? const Icon(Icons.person, size: 50, color: Colors.white)
+                    : null,
+              ),
+              const SizedBox(height: 14),
+              Text(name,
+                  style: const TextStyle(
+                      color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 4),
+              Text(email, style: const TextStyle(color: Colors.white70, fontSize: 13)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _menuTile(
+      BuildContext context, {
+        required IconData icon,
+        required String title,
+        required String subtitle,
+        required VoidCallback onTap,
+        bool isDestructive = false,
+      }) {
+    final Color color = isDestructive ? Colors.red : Colors.black87;
+    final Color iconBg = isDestructive ? Colors.red.withOpacity(0.08) : kGreen.withOpacity(0.08);
+    final Color iconColor = isDestructive ? Colors.red : kGreen;
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.grey.shade200),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(shape: BoxShape.circle, color: iconBg),
+              child: Icon(icon, color: iconColor, size: 22),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title,
+                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: color)),
+                  const SizedBox(height: 2),
+                  Text(subtitle, style: const TextStyle(fontSize: 12, color: Colors.black45)),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right, color: Colors.grey.shade400),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmLogout(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Logout'),
+        content: const Text('Are you sure you want to logout from your account?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Logout', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid != null) {
+        try {
+          await FirebaseFirestore.instance.collection('rescueTeamUsers').doc(uid).update({
+            'isOnline': false,
+            'lastSeenAt': FieldValue.serverTimestamp(),
+          });
+        } catch (_) {}
+      }
+      await FirebaseAuth.instance.signOut();
+
+      // FIXED: this screen can be reached in more than one way —
+      // straight from RescueLoginScreen (pushReplacement, which leaves
+      // AuthWrapper sitting underneath in the stack), OR via
+      // PendingApprovalScreen's auto-approval flow, which uses
+      // `pushAndRemoveUntil(..., (route) => false)` and wipes AuthWrapper
+      // out of the stack entirely. In that second case,
+      // `Navigator.popUntil((route) => route.isFirst)` was a no-op —
+      // RescueTeamHomeScreen WAS already the first route, so nothing
+      // happened and this screen just kept showing (now with empty data
+      // since the user was signed out underneath it).
+      //
+      // Rather than relying on AuthWrapper still being somewhere in the
+      // stack, this now explicitly pushes a fresh AuthWrapper and clears
+      // everything else — this works correctly no matter which path was
+      // used to get here, since AuthWrapper's own authStateChanges()
+      // listener will immediately show WelcomeScreen once it sees no
+      // signed-in user.
+      if (context.mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const AuthWrapper()),
+              (route) => false,
+        );
+      }
+    }
+  }
+}

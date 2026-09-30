@@ -92,8 +92,8 @@ class _NotificationSettingsScreenState
     ? StreamBuilder<QuerySnapshot>(
     stream: FirebaseFirestore.instance
         .collection('Notifications')
-        .where('user id', isEqualTo: FirebaseAuth.instance.currentUser?.uid) //filter for just login users
-        .orderBy('timestamp', descending: true)
+        .where('userId', isEqualTo: FirebaseAuth.instance.currentUser?.uid) //filter for just login users
+        .orderBy('createdAt', descending: true)
         .limit(20)
         .snapshots(),
     builder: (context, snapshot) {
@@ -139,7 +139,7 @@ class _NotificationSettingsScreenState
       final data =
       docs[index].data() as Map<String, dynamic>;
         //timestamp format
-      Timestamp? timestamp = data['timestamp'];
+      Timestamp? timestamp = data['createdAt'];
       String timeString = '';
       if (timestamp != null) {
         DateTime dateTime = timestamp.toDate();

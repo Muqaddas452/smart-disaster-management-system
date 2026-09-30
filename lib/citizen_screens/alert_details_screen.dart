@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:smartdisaster/profile_screen.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:smartdisaster/citizen_screens/profile_screen.dart';
 import 'alert_screen.dart';
-import 'widgets/map/disaster_map.dart';
-import 'home_screen.dart';
+import 'package:smartdisaster/widgets/map/disaster_map.dart';
+import 'package:smartdisaster/citizen_screens/citizen_home_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'profile_screen.dart';
 
@@ -83,6 +85,47 @@ class AlertDetailsScreen extends StatelessWidget {
   IconData get _icon => alert.icon;
   Color get _iconBg => alert.iconBg;
 
+  // Fetches the logged-in citizen's data and opens the Emergency Contacts screen.
+  Future<void> _openEmergencyContacts(BuildContext context) async {
+    // Loading indicator while we fetch the user's emergency contact data
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      Map<String, dynamic> userData = {};
+
+      if (user != null) {
+        final doc = await FirebaseFirestore.instance
+            .collection('citizens')
+            .doc(user.uid)
+            .get();
+        if (doc.exists) {
+          userData = doc.data() ?? {};
+        }
+      }
+
+      if (!context.mounted) return;
+      Navigator.pop(context); // close loading dialog
+
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => EmergencyContactsScreen(userData: userData),
+        ),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      Navigator.pop(context); // close loading dialog
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not load emergency contacts: $e')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -94,7 +137,6 @@ class AlertDetailsScreen extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Container(
-              width: 110,
               height: 110,
               decoration: BoxDecoration(
                 color: _iconBg.withValues(alpha: 0.25),
@@ -181,8 +223,7 @@ class AlertDetailsScreen extends StatelessWidget {
                   icon: Icons.phone_rounded,
                   label: 'Call Emergency',
                   color: const Color(0xFF43A047),
-                  onTap: () {
-                  },
+                  onTap: () => _openEmergencyContacts(context),
                 ),
                 const SizedBox(width: 40),
                 _ActionButton(
@@ -227,20 +268,11 @@ class AlertDetailsScreen extends StatelessWidget {
     return AppBar(
       backgroundColor: _primaryGreen,
       elevation: 0,
+      title: const Text('Alert Details', style: TextStyle(color: Colors.white)),
       leading: IconButton(
-        icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white),
+        icon: const Icon(Icons.arrow_back_ios, color: Colors.white),
         onPressed: () => Navigator.pop(context),
       ),
-      title: const Text('Alert Details', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
-      centerTitle: true,
-      actions: [
-        IconButton(
-          icon: const Icon(Icons.ios_share_outlined, color: Colors.white),
-          onPressed: () {
-            // TODO: share alert details
-          },
-        ),
-      ],
     );
   }
 }
@@ -283,6 +315,9 @@ class _ActionButton extends StatelessWidget {
     );
   }
 }
+
+
+
 
 
 

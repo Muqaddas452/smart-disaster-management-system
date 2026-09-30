@@ -116,6 +116,24 @@ class PolygonModel {
           DateTime.now(),
     );
   }
+  // Factory constructor for raw Map data and document ID
+  factory PolygonModel.fromFirestoreData(Map<String, dynamic> data, String docId) {
+    final List<dynamic> coordinateList = data['coordinates'] ?? [];
+
+    return PolygonModel(
+      id: docId,
+      type: data['type'] ?? 'Unknown',
+      severity: data['severity'] ?? 'Low',
+      color: data['color'] ?? 'red',
+      coordinates: coordinateList.map((point) {
+        return LatLng(
+          (point['lat'] as num).toDouble(),
+          (point['lng'] as num).toDouble(),
+        );
+      }).toList(),
+      createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+    );
+  }
 
   /// Convert model to Firestore
   Map<String, dynamic> toMap() {

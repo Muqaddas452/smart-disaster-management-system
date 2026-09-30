@@ -30,7 +30,7 @@ class DisasterMapScreen extends StatelessWidget {
         ],
       ),
 
-      body: const DisasterMap(
+      body: DisasterMap(
         isAdmin: false,
       ),
     );

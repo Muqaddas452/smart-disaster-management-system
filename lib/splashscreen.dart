@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart'; // authIndex/citizens se role aur profile status check krne k liye
+import 'package:firebase_auth/firebase_auth.dart'; // current logged-in user check krne k liye
 import 'welcomescreen.dart';
-import 'home_screen.dart';
-import 'profile_completion_screen.dart';
+import 'citizen_screens/citizen_home_screen.dart';
+import 'citizen_screens/profile_completion_screen.dart';
+import 'rescue_team_screens//rescue_home_screen.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -22,47 +23,81 @@ class _SplashScreenState extends State<SplashScreen> {
     });
   }
 
+  // ========================================================
+  // Auth check logic — authIndex se role check karna
+  // ========================================================
   Future<void> _checkAuthAndNavigate() async {
     if (!mounted) return;
 
     final currentUser = FirebaseAuth.instance.currentUser;
 
-    // Step 1: Agar koi logged-in nahi hai, WelcomeScreen par bhejein
+    // Step 1: agar koi bhi logged-in nahi h, seedha WelcomeScreen pe jana
     if (currentUser == null) {
       _goTo(const WelcomeScreen());
       return;
     }
 
     try {
-      // Step 2: Firestore se check karein ke user ka document maujood hai ya nahi
-      final citizenDoc = await FirebaseFirestore.instance
-          .collection('citizens')
+      // Step 2: authIndex se is user ka role check karna
+      final authIndexDoc = await FirebaseFirestore.instance
+          .collection('authIndex')
           .doc(currentUser.uid)
           .get();
 
-      // Agar citizens collection mein record nahi mila, toh safety ke liye WelcomeScreen
-      if (!citizenDoc.exists) {
+      if (!authIndexDoc.exists) {
         await FirebaseAuth.instance.signOut();
         _goTo(const WelcomeScreen());
         return;
       }
 
-      // Step 3: Check karein ke profile complete hai ya nahi
-      final bool isComplete =
-          (citizenDoc.data() as Map<String, dynamic>?)?['isProfileComplete'] ??
-              false;
+      final String role = authIndexDoc.get('role');
 
-      if (isComplete) {
-        _goTo(const HomeScreen()); // Seedha Citizen Home Screen
+      if (role == 'citizen') {
+        // Step 3a: citizen h — check karna profile complete h ya nahi
+        final citizenDoc = await FirebaseFirestore.instance
+            .collection('citizens')
+            .doc(currentUser.uid)
+            .get();
+
+        final bool isComplete =
+            (citizenDoc.data() as Map<String, dynamic>?)?['isProfileComplete'] ??
+                false;
+
+        if (isComplete) {
+          _goTo(const HomeScreen()); // seedha citizen dashboard
+        } else {
+          _goTo(const ProfileCompletionScreen()); // profile adhoori h
+        }
+      } else if (role == 'rescue_team') {
+        // Step 3b: rescue team member/leader h — fetch team data & navigate
+        final userDoc = await FirebaseFirestore.instance
+            .collection('rescueTeamUsers')
+            .doc(currentUser.uid)
+            .get();
+
+        final userData = userDoc.data();
+        final bool isLeader = userData?['isLeader'] ?? (userData?['role'] == 'leader');
+        final String teamId = userData?['teamId'] ?? '';
+        final String teamName = userData?['teamName'] ?? 'Rescue Team';
+
+        _goTo(
+          RescueTeamHomeScreen(
+            isLeader: isLeader,
+            teamId: teamId,
+            teamName: teamName,
+          ),
+        );
       } else {
-        _goTo(const ProfileCompletionScreen()); // Profile adhoori hai toh wahan bhejein
+        // Step 3c: admin ya koi aur role, WelcomeScreen pe bhej dena
+        _goTo(const WelcomeScreen());
       }
     } catch (e) {
-      // Kisi bhi error ki surat mein user ko stuck hone se bachane ke liye WelcomeScreen
+      // error fallback
       _goTo(const WelcomeScreen());
     }
   }
 
+  // helper — navigation
   void _goTo(Widget screen) {
     if (!mounted) return;
     Navigator.pushReplacement(
@@ -79,13 +114,14 @@ class _SplashScreenState extends State<SplashScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // LOGO (Apne asset path ke mutabiq check kar lein)
+            // LOGO
             Image.asset(
               'assets/images/logo.jpeg',
               width: 150,
               height: 150,
             ),
             const SizedBox(height: 20),
+            // App name
             const Text(
               'Smart Disaster Management System',
               style: TextStyle(
@@ -95,6 +131,7 @@ class _SplashScreenState extends State<SplashScreen> {
               ),
             ),
             const SizedBox(height: 30),
+            // Loading indicator
             const CircularProgressIndicator(
               color: Colors.green,
             ),
@@ -104,8 +141,6 @@ class _SplashScreenState extends State<SplashScreen> {
     );
   }
 }
-
-
 
 
 

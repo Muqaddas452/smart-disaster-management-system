@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import '../auth_service.dart';
+import 'package:smartdisaster/rescue_team_screens/rescue_login_screen.dart';
+import 'package:smartdisaster/services/auth_service.dart';
 import 'forgotpassword.dart';
-import 'home_screen.dart';
-import '../services/fcm_token_service.dart'; // NEW: Apne project ke folder structure ke mutabiq sahi path dein
+import 'package:smartdisaster/citizen_screens/citizen_home_screen.dart';
+import 'package:smartdisaster/rescue_team_screens/rescue_login_screen.dart'; // NEW: needed for the rescue team login link
+import 'package:smartdisaster/services/fcm_token_service.dart'; // NEW: Apne project ke folder structure ke mutabiq sahi path dein
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -41,49 +43,24 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
-    try {
-      // login by using firebase
-      UserCredential userCredential = await FirebaseAuth.instance.signInWithEmailAndPassword(
-        email: email,
-        password: password,
-      );
+    // this calls the real login logic (Firebase + authIndex role check)
+    await _authService.loginUser(
+      email: email,
+      password: password,
+      context: context,
+    );
 
-      User? user = userCredential.user;
-
-      if (user != null) {
-        // check if email is verified or not
-        if (user.emailVerified) {
-          //if email is verified then save FCM token and go next
-          await FcmTokenService.saveFCMToken(user.uid);
-          FcmTokenService.listenForTokenRefresh(user.uid);
-
-          // authservice role
-          await _authService.loginUser(
-            email: email,
-            password: password,
-            context: context,
-          );
-        } else {
-          // if email is not verified then logout and show warning
-          await FirebaseAuth.instance.signOut();
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Yor eamail is not verified .please check your inbox۔'),
-                backgroundColor: Colors.red,
-              ),
-            );
-          }
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Fault in email'), backgroundColor: Colors.red),
-        );
-      }
+    // NEW: Agar login successful raha ho to Firebase Auth mein currentUser
+    // set ho chuka hoga. Us user ka FCM token generate karke Firestore ke
+    // citizens collection mein save kar do, aur future refresh ke liye
+    // listener bhi laga do.
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser != null) {
+      await FcmTokenService.saveFCMToken(currentUser.uid);
+      FcmTokenService.listenForTokenRefresh(currentUser.uid);
     }
   }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -154,7 +131,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   child: Icon(
                     Icons.security,
                     size: 52,
-                    color: kGreen,
+                    color: Colors.green,
                   ),
                 ),
               ),
@@ -172,7 +149,7 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               const SizedBox(height: 8),
               const Text(
-                'Secure access for emergency responders',
+                'Secure access for people in emergency ',
                 style: TextStyle(
                   fontSize: 14,
                   color: Color(0xFF888888),
@@ -219,7 +196,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 child: ElevatedButton(
                   onPressed: _onLoginPressed, // CHANGED from direct navigation
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: kGreen,
+                    backgroundColor:Colors.green[800],
                     foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(50),
@@ -251,6 +228,31 @@ class _LoginScreenState extends State<LoginScreen> {
                 },
                 child: const Text("Forgot Password?"),
               ),
+
+              // ── NEW: Rescue Team login link ──
+              const SizedBox(height: 12),
+              GestureDetector(
+                onTap: () {
+                  // takes rescue team members/leaders to their own login screen
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const RescueLoginScreen(),
+                    ),
+                  );
+                },
+                child: const Text(
+                  'Are you a rescue team member or leader? Please click here to login',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: kGreen,
+                    fontWeight: FontWeight.w600,
+                    decoration: TextDecoration.underline,
+                  ),
+                ),
+              ),
+
               const SizedBox(height: 20),
             ],
           ),

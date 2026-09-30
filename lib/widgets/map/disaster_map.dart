@@ -3,32 +3,48 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
-import '../../models/polygon_model.dart';
-import '../../Services/map_service.dart';
-import 'polygon_layer.dart';
-import 'marker_layer.dart';
+import 'package:smartdisaster/models/polygon_model.dart';
+import 'package:smartdisaster/services/map_service.dart';
+import 'package:smartdisaster/widgets/map/polygon_layer.dart';
+import 'package:smartdisaster/database/map_icon_helper.dart';
+import 'package:smartdisaster/widgets/map/marker_layer.dart';
 
 class DisasterMap extends StatefulWidget {
-  const DisasterMap({
+  DisasterMap({
     super.key,
     this.isAdmin = false,
     this.targetLat,    // Shelter Latitude
     this.targetLng,    // Shelter Longitude
-    this.targetTitle,  // Shelter Name
+    this.targetTitle, // Shelter Name
+    this.isRescueView = false,
+    this.zonesStream,
+    this.initialCameraPosition,
+    this.autoFollowLocation = true,
+    this.showControls = true,
   });
 
   final bool isAdmin;
   final double? targetLat;
   final double? targetLng;
   final String? targetTitle;
-
+  final bool isRescueView;
+  final Stream<List<PolygonModel>>? zonesStream;
+  final CameraPosition? initialCameraPosition;
+  final bool autoFollowLocation;
+  final bool showControls;
   @override
   State<DisasterMap> createState() => _DisasterMapState();
 }
 
 class _DisasterMapState extends State<DisasterMap> {
   bool _isPointInsidePolygon(LatLng point, List<LatLng> vertices) {
+    // Agar vertices empty hon ya 3 se kam hon to safe check return karo
+    if (vertices.isEmpty || vertices.length < 3) {
+      return false;
+    }
+
     int intersectCount = 0;
     for (int i = 0; i < vertices.length - 1; i++) {
       if (_rayIntersectsSegment(point, vertices[i], vertices[i + 1])) {
@@ -39,7 +55,7 @@ class _DisasterMapState extends State<DisasterMap> {
     if (_rayIntersectsSegment(point, vertices.last, vertices.first)) {
       intersectCount++;
     }
-    return (intersectCount % 2 == 1); // Odd means inside, even means outside
+    return (intersectCount % 2 == 1);
   }
 
   bool _rayIntersectsSegment(LatLng p, LatLng a, LatLng b) {
@@ -131,32 +147,54 @@ class _DisasterMapState extends State<DisasterMap> {
     super.initState();
 
     _initializeMap();
-    _loadAffectedZones();
+    _loadZones();
   }
 
-  void _loadAffectedZones() {
-    _polygonSubscription =
-        MapService.instance.getAffectedZones().listen((zones) {
-          List<PolygonModel> filteredZones = zones;
+  // FIXED: was `_loadAffectedZones()` and ALWAYS subscribed to
+  // `MapService.instance.getAffectedZones()`, completely ignoring
+  // `widget.zonesStream` — which is exactly why MapScreen's "Tasks" tab
+  // (which passes `zonesStream: MapService.instance.getTaskZones(...)`)
+  // was silently showing affected-zone polygons instead of task
+  // locations; the parameter was accepted but never actually used.
+  //
+  // Now: if the caller supplied `zonesStream` (e.g. the Tasks tab), that
+  // stream is used as-is and rendered directly — no "is the current user
+  // inside this polygon" filtering, since that check only makes sense
+  // for affected-zone warnings, not task buffer-circles (MapService's
+  // getTaskZones() already scopes those server-side by team/member).
+  // If no `zonesStream` was supplied, behavior is unchanged: falls back
+  // to `getAffectedZones()` with the same citizen/rescue "am I inside
+  // this zone" filtering as before.
+  void _loadZones() {
+    final bool usingCustomStream = widget.zonesStream != null;
+    final Stream<List<PolygonModel>> source =
+        widget.zonesStream ?? MapService.instance.getAffectedZones();
 
-          // If NOT admin, filter zones based on whether the citizen is inside the zone
-          if (!widget.isAdmin && _currentLocation != null) {
-            filteredZones = zones.where((zone) {
-              return _isPointInsidePolygon(
-                _currentLocation!,
-                zone.coordinates,
-              );
-            }).toList();
-          } else if (!widget.isAdmin && _currentLocation == null) {
-            // If location isn't fetched yet, show no zones until location is ready
-            filteredZones = [];
-          }
+    _polygonSubscription = source.listen((zones) {
+      List<PolygonModel> filteredZones = zones;
 
-          setState(() {
-            _affectedZones = filteredZones;
-            _polygons = PolygonLayer.buildPolygons(filteredZones);
-          });
-        });
+      if (!usingCustomStream) {
+        // Original affected-zones filtering — only applies to the
+        // default stream, never to a custom zonesStream like task zones.
+        if (!widget.isAdmin && _currentLocation != null) {
+          filteredZones = zones.where((zone) {
+            return _isPointInsidePolygon(
+              _currentLocation!,
+              zone.coordinates,
+            );
+          }).toList();
+        } else if (!widget.isAdmin && _currentLocation == null) {
+          // If location isn't fetched yet, show no zones until location is ready
+          filteredZones = [];
+        }
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _affectedZones = filteredZones;
+        _polygons = PolygonLayer.buildPolygons(filteredZones);
+      });
+    });
   }
 
   //----------------------------------------------------------
@@ -260,7 +298,7 @@ class _DisasterMapState extends State<DisasterMap> {
       });
 
       _updateAllMarkers();
-      _loadAffectedZones();
+      _loadZones();
 
       // Agar target shelter hai toh camera wahan focus ho, warna current location par
       if (_mapController != null) {
@@ -325,14 +363,15 @@ class _DisasterMapState extends State<DisasterMap> {
   // Update All Markers (Current Location + Target Shelter)
   //----------------------------------------------------------
 
-  void _updateAllMarkers() {
+  void _updateAllMarkers() async {
     Set<Marker> markersSet = {};
 
     // 1. Current Location Marker
     if (_currentLocation != null) {
-      markersSet.add(
-        MarkerLayer.buildCurrentLocationMarker(location: _currentLocation!),
+      final memberMarker = await MarkerLayer.buildCurrentLocationMarker(
+        location: _currentLocation!,
       );
+      markersSet.add(memberMarker);
     }
 
     // 2. Target Shelter Marker (Agar home screen se pass hua hai)
@@ -350,6 +389,7 @@ class _DisasterMapState extends State<DisasterMap> {
       );
     }
 
+    if (!mounted) return;
     setState(() {
       _markers = markersSet;
     });

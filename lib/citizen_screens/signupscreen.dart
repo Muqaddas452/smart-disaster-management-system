@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import '../auth_service.dart';
+import 'package:smartdisaster/citizen_screens/login_screen.dart';
+import 'package:smartdisaster/services/auth_service.dart';
 import '../services/fcm_token_service.dart';
 
 class SignUpScreen extends StatefulWidget {
@@ -224,10 +225,10 @@ class _SignUpScreenState extends State<SignUpScreen> {
   }
 
   Widget _buildHeader() {
-    return const Column(
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        SizedBox(width: double.infinity),
+        const SizedBox(width: double.infinity),
         Text(
           'Create Account',
           textAlign: TextAlign.center,
@@ -237,8 +238,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
             color: _primaryGreen,
           ),
         ),
-        SizedBox(height: 8),
-        Text(
+        const SizedBox(height: 8),
+        const Text(
           'Join the emergency response network',
           textAlign: TextAlign.center,
           style: TextStyle(
@@ -391,19 +392,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
       text: const TextSpan(
         style: TextStyle(fontSize: 13, color: Colors.black54),
         children: [
-          TextSpan(text: 'By signing up, you agree to our '),
-          TextSpan(
-            text: 'Terms of Service',
-            style: TextStyle(
-                color: _primaryGreen, fontWeight: FontWeight.w600),
-          ),
-          TextSpan(text: ' and\n'),
-          TextSpan(
-            text: 'Privacy Policy',
-            style: TextStyle(
-                color: _primaryGreen, fontWeight: FontWeight.w600),
-          ),
-          TextSpan(text: '.'),
+          TextSpan(text: 'Your account details are fully secured with our platform '),
         ],
       ),
     );
@@ -421,7 +410,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
             child: ElevatedButton(
               onPressed: isLoading ? null : _onSignUpPressed,
               style: ElevatedButton.styleFrom(
-                backgroundColor: _primaryGreen,
+                backgroundColor:Colors.green[800],
                 foregroundColor: Colors.white,
                 elevation: 2,
                 shape: RoundedRectangleBorder(
@@ -459,13 +448,16 @@ class _SignUpScreenState extends State<SignUpScreen> {
               ),
               GestureDetector(
                 onTap: () {
-                  Navigator.pop(context);
+                  Navigator.push(
+                      context,
+                    MaterialPageRoute(builder: (context) => LoginScreen()),
+                  );
                 },
                 child: const Text(
                   'Log In',
                   style: TextStyle(
                     fontSize: 14,
-                    color: _primaryGreen,
+                    color:Colors.green,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
