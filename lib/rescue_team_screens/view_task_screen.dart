@@ -4,7 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:smartdisaster/database/map_icon_helper.dart';
 import 'enroute_tracking_service.dart';
-import 'assign_members_screen.dart'; // Import assign members screen
+import 'assign_members_screen.dart';
 
 class ViewTaskScreen extends StatefulWidget {
   final String taskId;
@@ -17,16 +17,31 @@ class ViewTaskScreen extends StatefulWidget {
 
 class _ViewTaskScreenState extends State<ViewTaskScreen> {
   static const Color kGreen = Color(0xFF1B5E38);
+
+  // Task ka red pin map pe dikhana hai ya nahi (member ke liye zaroori hai).
+  // Agar leader ke map pe sirf members chahiye to isay false kar dein.
+  static const bool _showTaskMarker = true;
+
   String? _uid;
-  String? _teamId; // Added to store leader's teamId
+  String? _teamId;
   bool _isLeader = false;
   bool _iconsLoaded = false;
+
+  BitmapDescriptor? _memberIcon;
+  GoogleMapController? _mapController;
+  int _lastFitCount = -1;
 
   @override
   void initState() {
     super.initState();
     _loadUserRole();
     _precacheMapIcons();
+  }
+
+  @override
+  void dispose() {
+    _mapController?.dispose();
+    super.dispose();
   }
 
   Future<void> _loadUserRole() async {
@@ -40,17 +55,22 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
     if (mounted) {
       setState(() {
         _isLeader = data['isLeader'] == true || role == 'rescue_leader' || role == 'team_leader';
-        _teamId = data['teamId']; // Fetch teamId from Firestore doc
+        _teamId = data['teamId'];
       });
     }
   }
 
+  // Member ka icon sirf EK baar banta hai (pehle har rebuild pe banta tha).
+  // Agar custom icon fail ho jaye to default blue marker use hoga,
+  // taake markers kabhi silently gayab na hon.
   Future<void> _precacheMapIcons() async {
-    if (mounted) {
-      setState(() {
-        _iconsLoaded = true;
-      });
+    try {
+      _memberIcon = await createDirectIconMarker(Icons.person, Colors.blue.shade700, size: 50);
+    } catch (e) {
+      debugPrint('ViewTask: member icon failed - $e');
+      _memberIcon = BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure);
     }
+    if (mounted) setState(() => _iconsLoaded = true);
   }
 
   // --- TASK STATUS ACTIONS ---
@@ -60,29 +80,31 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
     });
   }
 
-  // CHANGED: per-member status instead of the single shared task
-  // `status` field. Previously, whichever member tapped "Mark as
-  // Enroute" first flipped the WHOLE task's status to 'enroute' — every
-  // other assigned member's button instantly (and wrongly) jumped to
-  // "I've Arrived", even though they personally hadn't started moving
-  // yet. Now each member's own progress lives at
-  // `memberStatuses.{their uid}`, completely independent of everyone
-  // else assigned to the same task. The task-level `status` field is
-  // now only used for the leader's own pre-assignment stages
-  // (dispatched/accepted/assigned) and the final 'resolved' state once
-  // every assigned member has finished.
+  // FIXED: pehle status 'enroute' set hota hai, phir tracking start hoti hai.
+  // Pehle ulta tha, is liye pehli location likhte hi build() mein
+  // stopIfTaskNoLongerEnroute tracking ko galat stop kar deta tha.
+  // Ab agar tracking start na ho (permission deny etc.) to status wapis
+  // 'assigned' ho jata hai aur member ko message milta hai.
   Future<void> _markEnroute() async {
-    await EnrouteTrackingService.instance.startTracking(widget.taskId);
-    await FirebaseFirestore.instance.collection('tasks').doc(widget.taskId).update({
-      'memberStatuses.$_uid': 'enroute',
-    });
+    if (_uid == null) return;
+    final taskRef = FirebaseFirestore.instance.collection('tasks').doc(widget.taskId);
+
+    await taskRef.update({'memberStatuses.$_uid': 'enroute'});
+    final started = await EnrouteTrackingService.instance.startTracking(widget.taskId);
+
+    if (!started) {
+      await taskRef.update({'memberStatuses.$_uid': 'assigned'});
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Location permission/GPS required. Please allow location and turn on GPS.'),
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _startTask() async {
-    // This member has arrived — stop THEIR OWN live movement tracking
-    // (they're stationary at the task now). This only ever affects this
-    // device's own tracking subscription, so it never interferes with
-    // any other member who might still be enroute.
     await EnrouteTrackingService.instance.stopTracking();
     await FirebaseFirestore.instance.collection('tasks').doc(widget.taskId).update({
       'memberStatuses.$_uid': 'in_progress',
@@ -91,8 +113,6 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
 
   Future<void> _markCompleted() async {
     await EnrouteTrackingService.instance.stopTracking();
-    // Clear only THIS member's dot — other assigned members' locations
-    // (if they're still working the same task) must stay visible.
     if (_uid != null) {
       await EnrouteTrackingService.clearMemberLocation(widget.taskId, _uid!);
     }
@@ -100,8 +120,6 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
     final taskRef = FirebaseFirestore.instance.collection('tasks').doc(widget.taskId);
     await taskRef.update({'memberStatuses.$_uid': 'completed'});
 
-    // If every assigned member has now completed their part, resolve
-    // the whole task and clear any remaining location data.
     final snap = await taskRef.get();
     final data = snap.data() ?? {};
     final List assignedIds = List.from(data['assignedMemberIds'] ?? []);
@@ -153,13 +171,6 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
     await _forceUpdateStatus(selected);
   }
 
-  // NOTE: this leader override still targets the overall task-level
-  // `status` field, not an individual member's `memberStatuses` entry —
-  // with multiple independent members, "override status" really needs
-  // to ask WHICH member you're overriding. Left as-is for now since
-  // that's a separate UI addition (a member picker); say the word and
-  // I'll add it — it would replace 'resolved' below with per-member
-  // logic like _markCompleted() uses.
   Future<void> _forceUpdateStatus(String newStatus) async {
     await FirebaseFirestore.instance.collection('tasks').doc(widget.taskId).update({
       'status': newStatus,
@@ -183,6 +194,33 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
     );
   }
 
+  // --- STATUS HELPERS (member list aur map dono use karte hain) ---
+  String _labelFor(String? statusValue) {
+    switch (statusValue) {
+      case 'enroute':
+        return 'Enroute';
+      case 'in_progress':
+        return 'In Progress';
+      case 'completed':
+        return 'Completed';
+      default:
+        return 'Assigned';
+    }
+  }
+
+  Color _colorFor(String? statusValue) {
+    switch (statusValue) {
+      case 'enroute':
+        return Colors.orange.shade700;
+      case 'in_progress':
+        return Colors.blue.shade700;
+      case 'completed':
+        return kGreen;
+      default:
+        return Colors.black45;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -203,23 +241,13 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
           }
 
           final taskData = snapshot.data!.data()!;
-          final String taskType = taskData['type'] ?? 'General';
           final String status = taskData['status'] ?? 'dispatched';
           final Map<String, dynamic> memberStatuses =
           Map<String, dynamic>.from(taskData['memberStatuses'] ?? {});
 
-          // Safety net now checks THIS member's own status, not the
-          // shared task status — tracking should stop for this device
-          // only once THIS member is no longer enroute, regardless of
-          // what other assigned members are doing.
           final String myStatus = (_uid != null ? memberStatuses[_uid] : null) ?? 'assigned';
           EnrouteTrackingService.instance.stopIfTaskNoLongerEnroute(widget.taskId, myStatus);
 
-          // FIXED: task documents store coordinates as `lat` / `lng`, but this
-          // used to read `latitude` / `longitude` — fields that don't exist on
-          // a task doc — so it always silently fell back to the default point
-          // below and showed the incident in the wrong place. Both spellings
-          // are accepted now.
           final double lat = ((taskData['lat'] ?? taskData['latitude'] ?? 32.4274) as num).toDouble();
           final double lng = ((taskData['lng'] ?? taskData['longitude'] ?? 73.5693) as num).toDouble();
 
@@ -288,14 +316,17 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
                 ),
 
                 const SizedBox(height: 16),
-                const Text('LIVE TRACKING', style: TextStyle(color: Colors.black45, fontSize: 11, fontWeight: FontWeight.bold)),
+                Text(
+                  _isLeader ? 'LIVE TRACKING (TEAM MEMBERS)' : 'LIVE TRACKING (YOU & TASK)',
+                  style: const TextStyle(color: Colors.black45, fontSize: 11, fontWeight: FontWeight.bold),
+                ),
                 const SizedBox(height: 8),
 
                 Container(
                   height: 220,
                   clipBehavior: Clip.antiAlias,
                   decoration: BoxDecoration(borderRadius: BorderRadius.circular(12)),
-                  child: _buildLiveTrackingMap(taskData, taskType, lat, lng),
+                  child: _buildLiveTrackingMap(taskData, memberStatuses, lat, lng),
                 ),
 
                 const SizedBox(height: 16),
@@ -319,99 +350,139 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
     );
   }
 
-  Widget _buildLiveTrackingMap(Map<String, dynamic> taskData, String taskType, double lat, double lng) {
-    return FutureBuilder<Set<Marker>>(
-      future: _buildMarkersList(taskData, taskType, lat, lng),
-      builder: (context, snapshot) {
-        final markers = snapshot.data ?? {};
+  // CHANGED: FutureBuilder hata diya. Markers ab seedha (synchronously)
+  // bante hain kyunke icon pehle se cached hai. Camera bhi markers ke
+  // hisaab se khud fit hota hai.
+  Widget _buildLiveTrackingMap(
+      Map<String, dynamic> taskData,
+      Map<String, dynamic> memberStatuses,
+      double lat,
+      double lng,
+      ) {
+    final markers = _buildMarkers(taskData, memberStatuses, lat, lng);
+    final points = markers.map((m) => m.position).toList();
 
-        return GoogleMap(
-          initialCameraPosition: CameraPosition(target: LatLng(lat, lng), zoom: 13),
-          markers: markers,
-          myLocationButtonEnabled: false,
-          zoomControlsEnabled: true,
-        );
+    // Camera sirf tab dobara fit hota hai jab markers ki tadaad badle
+    // (taake user map ko pan kare to camera wapis na kheenche).
+    if (points.length != _lastFitCount) {
+      _lastFitCount = points.length;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _fitCamera(points));
+    }
+
+    return GoogleMap(
+      initialCameraPosition: CameraPosition(target: LatLng(lat, lng), zoom: 13),
+      markers: markers,
+      onMapCreated: (controller) {
+        _mapController = controller;
+        _fitCamera(points);
       },
+      myLocationButtonEnabled: false,
+      zoomControlsEnabled: true,
     );
   }
-  // Helper function to build markers asynchronously without cache errors
-  Future<Set<Marker>> _buildMarkersList(Map<String, dynamic> taskData, String taskType, double lat, double lng) async {
+
+  Future<void> _fitCamera(List<LatLng> points) async {
+    final c = _mapController;
+    if (c == null || points.isEmpty) return;
+
+    try {
+      double minLat = points.first.latitude, maxLat = points.first.latitude;
+      double minLng = points.first.longitude, maxLng = points.first.longitude;
+      for (final p in points) {
+        if (p.latitude < minLat) minLat = p.latitude;
+        if (p.latitude > maxLat) maxLat = p.latitude;
+        if (p.longitude < minLng) minLng = p.longitude;
+        if (p.longitude > maxLng) maxLng = p.longitude;
+      }
+
+      if (minLat == maxLat && minLng == maxLng) {
+        await c.animateCamera(CameraUpdate.newLatLngZoom(points.first, 15));
+        return;
+      }
+
+      await c.animateCamera(
+        CameraUpdate.newLatLngBounds(
+          LatLngBounds(
+            southwest: LatLng(minLat, minLng),
+            northeast: LatLng(maxLat, maxLng),
+          ),
+          60,
+        ),
+      );
+    } catch (e) {
+      debugPrint('ViewTask: camera fit failed - $e');
+    }
+  }
+
+  // ROLE-BASED markers:
+  //  - Leader: apni team ke SAB assigned members (+ task pin)
+  //  - Member: sirf APNA marker (+ task pin)
+  Set<Marker> _buildMarkers(
+      Map<String, dynamic> taskData,
+      Map<String, dynamic> memberStatuses,
+      double lat,
+      double lng,
+      ) {
     final Set<Marker> markers = {};
-    final Map<String, dynamic> memberLocations = Map<String, dynamic>.from(taskData['memberLocations'] ?? {});
+    final Map<String, dynamic> memberLocations =
+    Map<String, dynamic>.from(taskData['memberLocations'] ?? {});
     final List assignedMembers = taskData['assignedMembers'] ?? [];
+    final List assignedIds = taskData['assignedMemberIds'] ?? [];
 
-    // NOTE: Task/Incident marker ko yahan se hata diya gaya hai
-    // kyun ke task ki location pehle hi Map screen ke Tasks tab par show hoti hai.
+    if (_showTaskMarker) {
+      markers.add(
+        Marker(
+          markerId: const MarkerId('task_location'),
+          position: LatLng(lat, lng),
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+          infoWindow: const InfoWindow(title: 'Task Location'),
+        ),
+      );
+    }
 
-    // Dynamic Team Members Live Location Markers with Name
-    final memberIcon = await createDirectIconMarker(Icons.person, Colors.blue.shade700, size: 50);
+    // Kaun kaun se uids ka marker dikhana hai
+    final List<String> visibleUids = _isLeader
+        ? assignedIds.map((e) => e.toString()).toList()
+        : (_uid != null ? [_uid!] : <String>[]);
 
-    memberLocations.forEach((uid, locData) {
-      if (locData is Map && locData.containsKey('lat') && locData.containsKey('lng')) {
-        final double memberLat = (locData['lat'] as num).toDouble();
-        final double memberLng = (locData['lng'] as num).toDouble();
+    for (final uid in visibleUids) {
+      final locData = memberLocations[uid];
+      if (locData is! Map || locData['lat'] == null || locData['lng'] == null) continue;
 
-        // Assigned members list se us member ka naam dhoondna
-        String memberName = 'Team Member';
-        for (var m in assignedMembers) {
+      final double memberLat = (locData['lat'] as num).toDouble();
+      final double memberLng = (locData['lng'] as num).toDouble();
+
+      String memberName = uid == _uid ? 'You' : 'Team Member';
+      if (uid != _uid) {
+        for (final m in assignedMembers) {
           if (m is Map && (m['uid'] == uid || m['id'] == uid)) {
-            memberName = m['name'] ?? 'Team Member';
+            memberName = (m['name'] ?? 'Team Member').toString();
             break;
           }
         }
-
-        markers.add(
-          Marker(
-            markerId: MarkerId('member_$uid'),
-            position: LatLng(memberLat, memberLng),
-            icon: memberIcon,
-            anchor: const Offset(0.5, 0.5),
-            infoWindow: InfoWindow(
-              title: memberName, // Member ka real name show hoga
-              snippet: 'Enroute / On Location',
-            ),
-          ),
-        );
       }
-    });
+
+      markers.add(
+        Marker(
+          markerId: MarkerId('member_$uid'),
+          position: LatLng(memberLat, memberLng),
+          icon: _memberIcon ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
+          anchor: const Offset(0.5, 0.5),
+          infoWindow: InfoWindow(
+            title: memberName,
+            snippet: _labelFor(memberStatuses[uid] as String?),
+          ),
+        ),
+      );
+    }
 
     return markers;
   }
 
-  // CHANGED: now also shows each member's individual status (from
-  // `memberStatuses`) next to their name, instead of just a plain name
-  // list — this is the "leader can see each member's status
-  // individually" part of the fix.
   Widget _buildMemberList(Map<String, dynamic> taskData, Map<String, dynamic> memberStatuses) {
     final List assignedMembers = taskData['assignedMembers'] ?? [];
     if (assignedMembers.isEmpty) {
       return const Text('No team members assigned yet.', style: TextStyle(color: Colors.black45));
-    }
-
-    String labelFor(String? statusValue) {
-      switch (statusValue) {
-        case 'enroute':
-          return 'Enroute';
-        case 'in_progress':
-          return 'In Progress';
-        case 'completed':
-          return 'Completed';
-        default:
-          return 'Assigned';
-      }
-    }
-
-    Color colorFor(String? statusValue) {
-      switch (statusValue) {
-        case 'enroute':
-          return Colors.orange.shade700;
-        case 'in_progress':
-          return Colors.blue.shade700;
-        case 'completed':
-          return kGreen;
-        default:
-          return Colors.black45;
-      }
     }
 
     return Column(
@@ -443,12 +514,12 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color: colorFor(memberStatus).withOpacity(0.1),
+                    color: _colorFor(memberStatus).withOpacity(0.1),
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: Text(
-                    labelFor(memberStatus),
-                    style: TextStyle(color: colorFor(memberStatus), fontSize: 11, fontWeight: FontWeight.bold),
+                    _labelFor(memberStatus),
+                    style: TextStyle(color: _colorFor(memberStatus), fontSize: 11, fontWeight: FontWeight.bold),
                   ),
                 ),
             ],
@@ -458,10 +529,6 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
     );
   }
 
-  // CHANGED: once the task has been assigned to members, this now shows
-  // an aggregate summary built from `memberStatuses` (e.g. "1 of 3
-  // members completed") instead of one generic sentence that implied a
-  // single assigned member.
   Widget _buildLiveStatusCard(
       String status, Map<String, dynamic> taskData, Map<String, dynamic> memberStatuses) {
     String message = '';
@@ -537,11 +604,6 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
     );
   }
 
-  // CHANGED: the member-facing branch now reads `myStatus`
-  // (this member's own entry in `memberStatuses`) instead of the
-  // shared task-level `status` — so each assigned member sees the
-  // button matching THEIR OWN progress, independent of what other
-  // members assigned to the same task are doing.
   Widget _buildActionButtons(
       String status,
       Map<String, dynamic> taskData,
@@ -595,9 +657,6 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
             ],
           ],
         );
-      }
-      if (status == 'assigned') {
-        return _overrideButton(status);
       }
     } else {
       final List assignedMemberIds = taskData['assignedMemberIds'] ?? [];

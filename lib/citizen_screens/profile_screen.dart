@@ -10,6 +10,7 @@ import 'edit_personal_details.dart';
 import 'login_screen.dart';
 import 'feedback_screen.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:flutter/services.dart'; //for clipboard
 
 // ── OFFLINE SUPPORT ────────────────────────────────────────────────
@@ -774,6 +775,11 @@ class ChangePasswordScreen extends StatelessWidget {
 class AboutAppScreen extends StatelessWidget {
   const AboutAppScreen({super.key});
 
+  Future<String> _getVersion() async {
+    final info = await PackageInfo.fromPlatform();
+    return 'Version ${info.version} (Build ${info.buildNumber})';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -782,7 +788,10 @@ class AboutAppScreen extends StatelessWidget {
         backgroundColor: const Color(0xFF1B5E38),
         title: const Text('About App', style: TextStyle(color: Colors.white)),
         centerTitle: true,
-        leading: IconButton(icon: const Icon(Icons.arrow_back, color: Colors.white), onPressed: () => Navigator.pop(context)),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
       ),
       body: Padding(
         padding: const EdgeInsets.all(20),
@@ -802,7 +811,16 @@ class AboutAppScreen extends StatelessWidget {
               style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF1B5E38)),
             ),
             const SizedBox(height: 8),
-            const Text('Version 1.0.0 (Citizen App)', style: TextStyle(color: Colors.grey, fontSize: 13)),
+            FutureBuilder<String>(
+              future: _getVersion(),
+              builder: (context, snapshot) {
+                final versionText = snapshot.data ?? 'Loading...';
+                return Text(
+                  '$versionText (Citizen App)',
+                  style: const TextStyle(color: Colors.grey, fontSize: 13),
+                );
+              },
+            ),
             const SizedBox(height: 24),
             const Text(
               'This application is designed to help citizens stay safe and alert during natural disasters or emergencies. Users can view affected disaster zones on a live map, locate nearby shelters and hospitals, manage emergency contacts, and receive critical broadcast alerts directly from rescue authorities.',
@@ -810,7 +828,10 @@ class AboutAppScreen extends StatelessWidget {
               style: TextStyle(fontSize: 14, color: Colors.black87, height: 1.5),
             ),
             const Spacer(),
-            const Text('Developed for Public Safety| SDMS', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey)),
+            const Text(
+              'Developed for Public Safety | SDMS',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey),
+            ),
             const SizedBox(height: 10),
           ],
         ),
