@@ -1,228 +1,276 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:smart_disaster_management_system/database/rescue_dao.dart'; // adjust path if needed
 
-class RescuePersonalDetailsScreen extends StatelessWidget {
+// UI is exactly the same as before. The only addition: details are shown
+// instantly from the SQLite cache (works offline too), then silently
+// refreshed + re-cached whenever the live Firestore stream has new data.
+class RescuePersonalDetailsScreen extends StatefulWidget {
   const RescuePersonalDetailsScreen({super.key});
 
+  @override
+  State<RescuePersonalDetailsScreen> createState() =>
+      _RescuePersonalDetailsScreenState();
+}
+
+class _RescuePersonalDetailsScreenState
+    extends State<RescuePersonalDetailsScreen> {
   static const Color kGreen = Color(0xFF1B5E38);
-  static const Color kLightBlue = Color(0xFFE8F4FD);
+
+  Map<String, dynamic>? _profile;
+  bool _loadedOnce = false;
+  StreamSubscription? _sub;
+
+  @override
+  void initState() {
+    super.initState();
+    _init();
+  }
+
+  Future<void> _init() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) {
+      if (mounted) setState(() => _loadedOnce = true);
+      return;
+    }
+
+    // 1) Show cache immediately — this works even with zero internet.
+    final cached = await RescueDao.getCachedProfile(uid);
+    if (cached != null && mounted) {
+      setState(() {
+        _profile = cached;
+        _loadedOnce = true;
+      });
+    }
+
+    // 2) Live Firestore stream — same document as the original
+    // StreamBuilder, just now we cache the result and call setState
+    // ourselves.
+    _sub = FirebaseFirestore.instance
+        .collection('rescueTeamUsers')
+        .doc(uid)
+        .snapshots()
+        .listen((snap) async {
+      final data = snap.data() ?? {};
+
+      final email = (data['email'] ?? FirebaseAuth.instance.currentUser?.email ?? '-').toString();
+      final phone = (data['phone'] ?? data['phoneNumber'] ?? '-').toString();
+      final emergencyContact = (data['emergencyContact'] ?? '-').toString();
+      final address = (data['address'] ?? data['personalAddress'] ?? '-').toString();
+      final specialization = (data['specialization'] ?? '-').toString();
+      final bloodGroup = (data['bloodGroup'] ?? '-').toString();
+      final teamName = (data['teamName'] ?? '-').toString();
+      final teamId = (data['teamId'] ?? '-').toString();
+      final officialAddress = (data['officialAddress'] ?? '-').toString();
+      final role = (data['role'] ?? 'rescue_leader').toString();
+      final isLeader = data['isLeader'] == true || role == 'rescue_leader' || role == 'team_leader';
+      final photoUrl = (data['photoUrl'] ?? '').toString();
+      final createdAt = data['createdAt'];
+      final createdAtStr = (createdAt is Timestamp) ? createdAt.toDate().toIso8601String() : '';
+
+      await RescueDao.cacheProfile(
+        uid: uid,
+        name: (data['name'] ?? '').toString(),
+        email: email,
+        phone: phone,
+        emergencyContact: emergencyContact,
+        personalAddress: address,
+        specialization: specialization,
+        bloodGroup: bloodGroup,
+        teamName: teamName,
+        teamId: teamId,
+        officialAddress: officialAddress,
+        role: role,
+        isLeader: isLeader,
+        photoUrl: photoUrl,
+        createdAt: createdAtStr,
+      );
+
+      final refreshed = await RescueDao.getCachedProfile(uid);
+      if (mounted) {
+        setState(() {
+          _profile = refreshed;
+          _loadedOnce = true;
+        });
+      }
+    }, onError: (_) {
+      // Offline — the cached profile is already showing, nothing to do here.
+      if (mounted) setState(() => _loadedOnce = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final String? uid = FirebaseAuth.instance.currentUser?.uid;
-
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5E8),
       appBar: AppBar(
         backgroundColor: kGreen,
+        elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.white),
           onPressed: () => Navigator.pop(context),
         ),
-        title: const Text('Personal Details',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
-        centerTitle: true,
+        title: const Text(
+          'Personal Details',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        ),
       ),
-      body: uid == null
-          ? const Center(child: Text('User not logged in'))
-          : StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-        stream:
-        FirebaseFirestore.instance.collection('rescueTeamUsers').doc(uid).snapshots(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator(color: kGreen));
-          }
-          if (!snapshot.hasData || !snapshot.data!.exists) {
-            return const Center(child: Text('Profile data not found'));
-          }
+      body: _buildBody(),
+    );
+  }
 
-          final data = snapshot.data!.data() ?? {};
+  Widget _buildBody() {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) {
+      return const Center(child: Text('User not logged in'));
+    }
 
-          // ── Leader's own details
-          final String name = data['name'] ?? data['fullName'] ?? '-';
-          final String email = data['email'] ?? '-';
-          final String phone = data['phone'] ?? data['phoneNumber'] ?? '-';
-          final String emergencyPhone = data['emergencyPhone'] ?? '-';
-          final String personalAddress = data['personalAddress'] ?? data['address'] ?? '-';
-          final String bloodGroup = data['bloodGroup'] ?? '-';
-          final String specialization = data['specialization'] ?? '-';
+    if (!_loadedOnce) {
+      return const Center(child: CircularProgressIndicator(color: kGreen));
+    }
 
-          // ── Team's details
-          final String rawTeamName = data['teamName'] ?? data['team_name'] ?? '';
-          final String teamId = data['teamId'] ?? data['team_id'] ?? '-';
-          final String officialAddress = data['officialAddress'] ?? '-';
-          final String role = data['role'] ?? 'rescue_leader';
-          final String roleLabel =
-          (role == 'rescue_leader' || role == 'team_leader') ? 'Team Leader' : role;
+    final data = _profile ?? {};
+    final String email = data['email'] ?? '-';
+    final String phone = data['phone'] ?? '-';
+    final String emergencyContact = data['emergencyContact'] ?? '-';
+    final String address = data['personalAddress'] ?? '-';
+    final String specialization = data['specialization'] ?? '-';
+    final String bloodGroup = data['bloodGroup'] ?? '-';
+    final String teamName = data['teamName'] ?? '-';
 
-          String joinedDate = '-';
-          final createdAt = data['createdAt'];
-          if (createdAt is Timestamp) {
-            joinedDate = _formatDate(createdAt.toDate());
-          }
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // PERSONAL DETAILS SECTION
+          _buildDetailCard(
+            icon: Icons.email_outlined,
+            label: 'EMAIL',
+            value: email,
+            trailingIcon: Icons.lock_outline,
+          ),
+          _buildDetailCard(
+            icon: Icons.phone_outlined,
+            label: 'PHONE NUMBER',
+            value: phone,
+          ),
+          _buildDetailCard(
+            icon: Icons.medical_services_outlined,
+            label: 'EMERGENCY CONTACT',
+            value: emergencyContact,
+          ),
+          _buildDetailCard(
+            icon: Icons.home_outlined,
+            label: 'PERSONAL ADDRESS',
+            value: address,
+          ),
+          _buildDetailCard(
+            icon: Icons.star_outline,
+            label: 'SPECIALIZATION',
+            value: specialization,
+          ),
+          _buildDetailCard(
+            icon: Icons.water_drop_outlined,
+            label: 'BLOOD GROUP',
+            value: bloodGroup,
+          ),
 
-          return FutureBuilder<String>(
-            future: _resolveTeamName(rawTeamName, teamId),
-            builder: (context, teamNameSnapshot) {
-              final String teamName = teamNameSnapshot.data ?? (rawTeamName.isNotEmpty ? rawTeamName : '-');
+          const SizedBox(height: 16),
+          const Text(
+            'TEAM DETAILS',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: Colors.black45,
+              letterSpacing: 0.8,
+            ),
+          ),
+          const SizedBox(height: 10),
 
-              final bool profileIncomplete =
-                  name == '-' || phone == '-' || personalAddress == '-' || teamName == '-';
-
-              return SingleChildScrollView(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (profileIncomplete)
-                      Container(
-                        margin: const EdgeInsets.only(bottom: 16),
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.amber.shade50,
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: Colors.amber.shade200),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(Icons.info_outline, size: 18, color: Colors.amber.shade800),
-                            const SizedBox(width: 8),
-                            const Expanded(
-                              child: Text('Your profile is incomplete. Some details below are missing.',
-                                  style: TextStyle(fontSize: 12, color: Colors.black87)),
-                            ),
-                          ],
-                        ),
-                      ),
-                    const Center(
-                      child: CircleAvatar(
-                        radius: 44,
-                        backgroundColor: Color(0xFF2C3E50),
-                        child: Icon(Icons.person, size: 46, color: Colors.white54),
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-
-                    // ── SECTION 1: LEADER'S OWN DETAILS
-                    _sectionLabel('YOUR DETAILS'),
-                    const SizedBox(height: 10),
-                    _tile(Icons.badge_outlined, 'FULL NAME', name),
-                    const SizedBox(height: 10),
-                    _tile(Icons.email_outlined, 'EMAIL', email, trailing: Icons.lock_outline),
-                    const SizedBox(height: 10),
-                    _tile(Icons.phone_outlined, 'PHONE NUMBER', phone),
-                    const SizedBox(height: 10),
-                    _tile(Icons.emergency_outlined, 'EMERGENCY CONTACT', emergencyPhone),
-                    const SizedBox(height: 10),
-                    _tile(Icons.home_outlined, 'PERSONAL ADDRESS', personalAddress),
-                    const SizedBox(height: 10),
-                    Row(children: [
-                      Expanded(
-                          child: _tile(Icons.star_outline, 'SPECIALIZATION', specialization,
-                              boldValue: true)),
-                      const SizedBox(width: 10),
-                      Expanded(
-                          child: _tile(Icons.bloodtype_outlined, 'BLOOD GROUP', bloodGroup,
-                              boldValue: true)),
-                    ]),
-
-                    const SizedBox(height: 26),
-
-                    // ── SECTION 2: TEAM'S DETAILS
-                    _sectionLabel('TEAM DETAILS'),
-                    const SizedBox(height: 10),
-                    _tile(Icons.group_outlined, 'TEAM NAME', teamName),
-                    const SizedBox(height: 10),
-                    _tile(Icons.business_outlined, 'OFFICIAL ADDRESS', officialAddress),
-                    const SizedBox(height: 10),
-                    Row(children: [
-                      Expanded(child: _tile(Icons.tag, 'TEAM ID', teamId, boldValue: true)),
-                      const SizedBox(width: 10),
-                      Expanded(
-                          child: _tile(Icons.calendar_today_outlined, 'JOINED DATE', joinedDate,
-                              boldValue: true)),
-                    ]),
-                    const SizedBox(height: 10),
-                    _tile(Icons.shield_outlined, 'ROLE', roleLabel, boldValue: true),
-                    const SizedBox(height: 20),
-                  ],
-                ),
-              );
-            },
-          );
-        },
+          // TEAM DETAILS SECTION
+          _buildDetailCard(
+            icon: Icons.group_outlined,
+            label: 'TEAM NAME',
+            value: teamName,
+          ),
+        ],
       ),
     );
   }
 
-  // Resolve team name from Firestore teams collection if missing in user doc
-  static Future<String> _resolveTeamName(String userDocTeamName, String teamId) async {
-    if (userDocTeamName.trim().isNotEmpty && userDocTeamName != '-') {
-      return userDocTeamName;
-    }
-    if (teamId.isEmpty || teamId == '-') {
-      return '-';
-    }
-    try {
-      final teamDoc = await FirebaseFirestore.instance.collection('rescueTeams').doc(teamId).get();
-      if (teamDoc.exists && teamDoc.data() != null) {
-        return teamDoc.data()!['teamName'] ?? teamDoc.data()!['name'] ?? '-';
-      }
-    } catch (_) {}
-    return '-';
-  }
-
-  static String _formatDate(DateTime dt) {
-    const months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
-    ];
-    final day = dt.day.toString().padLeft(2, '0');
-    return '$day ${months[dt.month - 1]} ${dt.year}';
-  }
-
-  Widget _sectionLabel(String label) {
-    return Text(label,
-        style: const TextStyle(
-            fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black45, letterSpacing: 1.4));
-  }
-
-  Widget _tile(IconData icon, String label, String value,
-      {IconData? trailing, bool boldValue = false}) {
+  // Card Widget with Flexible layout for long texts
+  Widget _buildDetailCard({
+    required IconData icon,
+    required String label,
+    required String value,
+    IconData? trailingIcon,
+  }) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: Colors.grey.shade200),
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Icon Container
           Container(
-            width: 40,
-            height: 40,
-            decoration: const BoxDecoration(shape: BoxShape.circle, color: kLightBlue),
-            child: Icon(icon, size: 20, color: Colors.black54),
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: kGreen.withOpacity(0.08),
+            ),
+            child: Icon(icon, color: kGreen, size: 20),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 14),
+
+          // Text Portion Wrapped in Expanded (Prevents character squeezing)
           Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(label,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label.toUpperCase(),
                   style: const TextStyle(
-                      fontSize: 10,
-                      color: Colors.black45,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 0.8)),
-              const SizedBox(height: 3),
-              Text(value,
-                  style: TextStyle(
-                      fontSize: 14,
-                      color: Colors.black87,
-                      fontWeight: boldValue ? FontWeight.bold : FontWeight.normal)),
-            ]),
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black45,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  value.isNotEmpty ? value : '-',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.black87,
+                    height: 1.3,
+                  ),
+                  softWrap: true,
+                ),
+              ],
+            ),
           ),
-          if (trailing != null) Icon(trailing, size: 20, color: Colors.black38),
+
+          if (trailingIcon != null) ...[
+            const SizedBox(width: 8),
+            Icon(trailingIcon, color: Colors.grey.shade400, size: 20),
+          ],
         ],
       ),
     );

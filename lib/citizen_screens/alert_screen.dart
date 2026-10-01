@@ -1,18 +1,20 @@
+import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:smart_disaster_management_system/database/citizen_dao.dart'; // adjust path if needed
 import 'alert_details_screen.dart';
 
 // ── Alert Model ───────────────────────────────────────────────────────────────
-// Yeh model ab "broadcast_alerts" collection ke asal fields se banta hai —
-// wahi collection jahan se citizen ko live/real alerts bhejay jaate hain.
+// This model is built from the actual fields of the "broadcast_alerts"
+// collection — the same collection that sends live/real alerts to citizens.
 class AlertModel {
   final String docId;
   final String disasterType; // e.g. "Flood", "Storm", "Heatwave", "Heavy Rain"
   final String priority;     // "Low" / "Medium" / "High"
-  final String targetArea;   // admin ne jo area likha (e.g. "M.B.Din")
-  final String message;      // admin ka type kiya hua alert message
+  final String targetArea;   // area typed by admin (e.g. "M.B.Din")
+  final String message;      // alert message typed by admin
   final DateTime createdAt;
 
   const AlertModel({
@@ -24,9 +26,9 @@ class AlertModel {
     required this.createdAt,
   });
 
-  // Firestore document ko AlertModel mein convert karta hai
+  // Converts a Firestore document into an AlertModel
   factory AlertModel.fromFirestore(String id, Map<String, dynamic> data) {
-    // createdAt Firestore mein Timestamp type hai, isliye pehle usko check kar k convert kar rahe hain
+    // createdAt is a Firestore Timestamp, so check and convert it first
     final rawCreatedAt = data['createdAt'];
     final DateTime createdAt =
     (rawCreatedAt is Timestamp) ? rawCreatedAt.toDate() : DateTime.now();
@@ -41,7 +43,26 @@ class AlertModel {
     );
   }
 
-  // Card aur details screen pe bada title
+  // NEW — builds an AlertModel from the SQLite cache. In SQLite, createdAt
+  // is stored as an ISO8601 string (not a Timestamp), so it needs its own
+  // factory — everything else is the same as fromFirestore.
+  factory AlertModel.fromCache(Map<String, dynamic> data) {
+    final rawCreatedAt = data['createdAt'];
+    final DateTime createdAt = (rawCreatedAt is String && rawCreatedAt.isNotEmpty)
+        ? (DateTime.tryParse(rawCreatedAt) ?? DateTime.now())
+        : DateTime.now();
+
+    return AlertModel(
+      docId: data['docId'] ?? '',
+      disasterType: data['disasterType'] ?? 'Unknown',
+      priority: data['priority'] ?? 'Medium',
+      targetArea: data['targetArea'] ?? '',
+      message: data['message'] ?? '',
+      createdAt: createdAt,
+    );
+  }
+
+  // Big title shown on the card and the details screen
   String get title {
     switch (disasterType) {
       case "Flood":
@@ -50,14 +71,14 @@ class AlertModel {
         return "Storm Warning";
       case "Heatwave":
         return "Heatwave Warning";
-      case "Heavy Rain": // NOTE: singular rakha hai, admin dashboard k exact spelling se match karna
+      case "Heavy Rain": // NOTE: kept singular to match admin dashboard's exact spelling
         return "Heavy Rain Alert";
       default:
         return "$disasterType Alert";
     }
   }
 
-  // Chota description — admin ka apna likha hua message directly dikhate hain
+  // Short description — shows the admin's own written message directly
   String get subtitle =>
       message.isNotEmpty ? message : "$disasterType alert in your area.";
 
@@ -103,9 +124,9 @@ class AlertModel {
   }
 }
 
-// Citizen k address aur admin k targetArea ke darmiyan keyword match check karta hai.
-// Yeh bilkul wahi logic hai jo home screen k _LiveAlertBanner mein hai —
-// taake dono jagah behavior consistent rahe.
+// Checks for a keyword match between the admin's targetArea and the
+// citizen's address. This is the exact same logic used in the home
+// screen's _LiveAlertBanner, so behavior stays consistent everywhere.
 bool _hasMatchingKeyword(String targetArea, String citizenAddress) {
   List<String> tokenize(String input) {
     final normalized =
@@ -120,101 +141,179 @@ bool _hasMatchingKeyword(String targetArea, String citizenAddress) {
 }
 
 // ── Alerts Screen ─────────────────────────────────────────────────────────────
-class AlertsScreen extends StatelessWidget {
+// UI and filtering logic are exactly the same as before. The only addition:
+// alerts are now shown instantly from the SQLite cache (works offline too),
+// then silently refreshed + re-cached whenever the live Firestore stream
+// has new data.
+class AlertsScreen extends StatefulWidget {
   const AlertsScreen({super.key});
 
+  @override
+  State<AlertsScreen> createState() => _AlertsScreenState();
+}
+
+class _AlertsScreenState extends State<AlertsScreen> {
   static const Color _primaryGreen = Color(0xFF1B5E20);
   static const Color _bgColor = Color(0xFFF0F2F5);
 
+  String _address = '';
+  List<AlertModel> _alerts = [];
+  bool _loadedOnce = false;
+
+  StreamSubscription? _citizenSub;
+  StreamSubscription? _alertsSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFromCacheThenListen();
+  }
+
+  Future<void> _loadFromCacheThenListen() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) {
+      if (mounted) setState(() => _loadedOnce = true);
+      return;
+    }
+
+    // 1) Show cache immediately — this works even with zero internet.
+    final cachedProfile = await CitizenDao.getCachedProfile(uid);
+    final cachedAlerts = await CitizenDao.getCachedAlerts();
+    if (cachedProfile != null) {
+      _address = cachedProfile['address'] ?? '';
+    }
+    _recomputeFilteredAlerts(cachedAlerts);
+    if (mounted) setState(() => _loadedOnce = true);
+
+    // 2) Citizen's live address (profile updates once internet is back)
+    _citizenSub = FirebaseFirestore.instance
+        .collection('citizens')
+        .doc(uid)
+        .snapshots()
+        .listen((snap) async {
+      if (!snap.exists) return;
+      final data = snap.data() as Map<String, dynamic>?;
+      final address = (data?['address'] ?? '').toString();
+      if (address.isEmpty) return;
+
+      _address = address;
+      await CitizenDao.cacheProfile(
+        uid: uid,
+        name: (data?['name'] ?? '').toString(),
+        email: (data?['email'] ?? '').toString(),
+        phone: (data?['phone'] ?? '').toString(),
+        address: address,
+        emergencyContactName: (data?['emergencyContactName'] ?? '').toString(),
+        emergencyContactPhone: (data?['emergencyContactPhone'] ?? '').toString(),
+        emergencyContactRelation:
+        (data?['emergencyContactRelation'] ?? '').toString(),
+      );
+
+      final freshAlerts = await CitizenDao.getCachedAlerts();
+      _recomputeFilteredAlerts(freshAlerts);
+    });
+
+    // 3) Live broadcast_alerts — same query as the original StreamBuilder,
+    // just now we cache the results and call setState ourselves.
+    _alertsSub = FirebaseFirestore.instance
+        .collection('broadcast_alerts')
+        .where('status', isEqualTo: 'Sent')
+        .orderBy('createdAt', descending: true)
+        .limit(50)
+        .snapshots()
+        .listen((snap) async {
+      final alerts = snap.docs.map((d) {
+        final data = d.data();
+        final createdAt = data['createdAt'];
+        return {
+          'docId': d.id,
+          'disasterType': data['disasterType'] ?? 'Unknown',
+          'priority': data['priority'] ?? 'Medium',
+          'targetArea': data['targetArea'] ?? '',
+          'message': data['message'] ?? '',
+          'createdAt': (createdAt is Timestamp)
+              ? createdAt.toDate().toIso8601String()
+              : DateTime.now().toIso8601String(),
+        };
+      }).toList();
+
+      await CitizenDao.cacheAlerts(alerts);
+      _recomputeFilteredAlerts(alerts);
+    }, onError: (_) {
+      // Offline — the cached list is already showing, nothing to do here.
+    });
+  }
+
+  void _recomputeFilteredAlerts(List<Map<String, dynamic>> rawAlerts) {
+    final models = rawAlerts.map((d) => AlertModel.fromCache(d)).toList();
+    final filtered = _address.isEmpty
+        ? <AlertModel>[]
+        : models
+        .where((alert) => _hasMatchingKeyword(alert.targetArea, _address))
+        .toList();
+    if (mounted) setState(() => _alerts = filtered);
+  }
+
+  @override
+  void dispose() {
+    _citizenSub?.cancel();
+    _alertsSub?.cancel();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final uid = FirebaseAuth.instance.currentUser?.uid;
-
     return Scaffold(
       backgroundColor: _bgColor,
       appBar: _buildAppBar(context),
-      body: uid == null
-          ? const Center(child: Text("Please log in to see alerts."))
-      // Pehle citizen ka address nikal rahe hain, taake targetArea se match kar sakein
-          : StreamBuilder<DocumentSnapshot>(
-        stream: FirebaseFirestore.instance
-            .collection('citizens')
-            .doc(uid)
-            .snapshots(),
-        builder: (context, citizenSnapshot) {
-          if (!citizenSnapshot.hasData || !citizenSnapshot.data!.exists) {
-            return const Center(child: CircularProgressIndicator());
-          }
+      body: _buildBody(),
+    );
+  }
 
-          final citizenData =
-          citizenSnapshot.data!.data() as Map<String, dynamic>?;
-          final String address = citizenData?['address'] ?? '';
+  Widget _buildBody() {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) {
+      return const Center(child: Text("Please log in to see alerts."));
+    }
 
-          if (address.isEmpty) {
-            return const Center(
-              child: Padding(
-                padding: EdgeInsets.all(20),
-                child: Text(
-                  "Apna address profile mein add karein taake aapko relevant alerts mil sakein.",
-                  textAlign: TextAlign.center,
-                ),
-              ),
+    if (!_loadedOnce) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_address.isEmpty) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(20),
+          child: Text(
+            "Apna address profile mein add karein taake aapko relevant alerts mil sakein.",
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    }
+
+    if (_alerts.isEmpty) {
+      return const Center(
+          child: Text("No active alerts for your area right now."));
+    }
+
+    return ListView.separated(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      itemCount: _alerts.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 14),
+      itemBuilder: (context, index) {
+        final alert = _alerts[index];
+        return _AlertCard(
+          alert: alert,
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                  builder: (_) => AlertDetailsScreen(alert: alert)),
             );
-          }
-
-          // Ab asal "broadcast_alerts" collection se Sent alerts nikal rahe hain
-          return StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance
-                .collection('broadcast_alerts')
-                .where('status', isEqualTo: 'Sent')
-                .orderBy('createdAt', descending: true)
-                .limit(50)
-                .snapshots(),
-            builder: (context, alertSnapshot) {
-              if (alertSnapshot.hasError) {
-                return Center(child: Text("Error: ${alertSnapshot.error}"));
-              }
-              if (!alertSnapshot.hasData) {
-                return const Center(child: CircularProgressIndicator());
-              }
-
-              final docs = alertSnapshot.data!.docs;
-
-              // Sirf wo alerts rakh rahe hain jinka targetArea citizen k address se match ho
-              final alerts = docs
-                  .map((d) => AlertModel.fromFirestore(
-                  d.id, d.data() as Map<String, dynamic>))
-                  .where((alert) =>
-                  _hasMatchingKeyword(alert.targetArea, address))
-                  .toList();
-
-              if (alerts.isEmpty) {
-                return const Center(
-                    child: Text("No active alerts for your area right now."));
-              }
-
-              return ListView.separated(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                itemCount: alerts.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 14),
-                itemBuilder: (context, index) {
-                  final alert = alerts[index];
-                  return _AlertCard(
-                    alert: alert,
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) => AlertDetailsScreen(alert: alert)),
-                      );
-                    },
-                  );
-                },
-              );
-            },
-          );
-        },
-      ),
+          },
+        );
+      },
     );
   }
 

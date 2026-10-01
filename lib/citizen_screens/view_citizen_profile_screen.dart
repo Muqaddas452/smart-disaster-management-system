@@ -1,10 +1,17 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:smart_disaster_management_system/database/citizen_dao.dart'; // adjust path if needed
 import 'edit_profile_screen.dart';
 import 'feedback_screen.dart';
 import 'notification_settings_screen.dart';
 
+// UI and menu actions are exactly the same as before. The only addition:
+// the profile is shown instantly from the SQLite cache (works offline
+// too), then silently refreshed + re-cached whenever the live Firestore
+// stream has new data. Uses the SAME CitizenDao as the Home and Alerts
+// screens — no new DAO needed here.
 class ViewProfileScreen extends StatefulWidget {
   const ViewProfileScreen({super.key});
 
@@ -14,6 +21,84 @@ class ViewProfileScreen extends StatefulWidget {
 
 class _ViewProfileScreenState extends State<ViewProfileScreen> {
   final String _uid = FirebaseAuth.instance.currentUser!.uid;
+
+  Map<String, dynamic>? _profile;
+  bool _loadedOnce = false;
+  StreamSubscription? _sub;
+
+  @override
+  void initState() {
+    super.initState();
+    _init();
+  }
+
+  Future<void> _init() async {
+    // 1) Show cache immediately — this works even with zero internet.
+    final cached = await CitizenDao.getCachedProfile(_uid);
+    if (cached != null && mounted) {
+      setState(() {
+        _profile = cached;
+        _loadedOnce = true;
+      });
+    }
+
+    // 2) Live Firestore stream — same document as the original
+    // StreamBuilder, just now we cache the result and call setState
+    // ourselves.
+    _sub = FirebaseFirestore.instance
+        .collection('citizens')
+        .doc(_uid)
+        .snapshots()
+        .listen((snap) async {
+      if (!snap.exists) return;
+      final data = snap.data() as Map<String, dynamic>?;
+      if (data == null) return;
+
+      final name = (data['name'] ?? 'Not set').toString();
+      final email = (data['email'] ?? 'Not set').toString();
+      final phone = (data['phone'] ?? 'Not set').toString();
+      final address = (data['address'] ?? 'Not set').toString();
+      final emName = (data['emergencyContactName'] ?? '').toString();
+      final emPhone = (data['emergencyContactPhone'] ?? '').toString();
+      final emRelation = (data['emergencyContactRelation'] ?? '').toString();
+
+      await CitizenDao.cacheProfile(
+        uid: _uid,
+        name: name,
+        email: email,
+        phone: phone,
+        address: address,
+        emergencyContactName: emName,
+        emergencyContactPhone: emPhone,
+        emergencyContactRelation: emRelation,
+      );
+
+      if (mounted) {
+        setState(() {
+          _profile = {
+            'uid': _uid,
+            'name': name,
+            'email': email,
+            'phone': phone,
+            'address': address,
+            'emergencyContactName': emName,
+            'emergencyContactPhone': emPhone,
+            'emergencyContactRelation': emRelation,
+          };
+          _loadedOnce = true;
+        });
+      }
+    }, onError: (_) {
+      // Offline — the cached profile is already showing, nothing to do here.
+      if (mounted) setState(() => _loadedOnce = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -107,93 +192,89 @@ class _ViewProfileScreenState extends State<ViewProfileScreen> {
           ),
         ],
       ),
-      body: StreamBuilder<DocumentSnapshot>(
-        stream: FirebaseFirestore.instance
-            .collection('citizens')
-            .doc(_uid)
-            .snapshots(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
+      body: _buildBody(),
+    );
+  }
 
-          if (snapshot.hasError || !snapshot.hasData || !snapshot.data!.exists) {
-            return const Center(child: Text('Unable to load profile.'));
-          }
+  Widget _buildBody() {
+    if (!_loadedOnce) {
+      return const Center(child: CircularProgressIndicator());
+    }
 
-          final data = snapshot.data!.data() as Map<String, dynamic>;
-          final String name = data['name'] ?? 'Not set';
-          final String email = data['email'] ?? 'Not set';
-          final String phone = data['phone'] ?? 'Not set';
-          final String address = data['address'] ?? 'Not set';
+    if (_profile == null) {
+      return const Center(child: Text('Unable to load profile.'));
+    }
 
-          final String emName = data['emergencyContactName'] ?? '';
-          final String emPhone = data['emergencyContactPhone'] ?? '';
-          final String emRelation = data['emergencyContactRelation'] ?? '';
-          final bool hasEmergencyContact = emName.isNotEmpty;
+    final data = _profile!;
+    final String name = data['name'] ?? 'Not set';
+    final String email = data['email'] ?? 'Not set';
+    final String phone = data['phone'] ?? 'Not set';
+    final String address = data['address'] ?? 'Not set';
 
-          return SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                const SizedBox(height: 16),
-                CircleAvatar(
-                  radius: 48,
-                  backgroundColor: Colors.grey.shade300,
-                  child: const Icon(Icons.person, size: 50, color: Colors.grey),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  name,
-                  style: const TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black87,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Divider(color: Colors.grey.shade300),
-                const SizedBox(height: 16),
+    final String emName = data['emergencyContactName'] ?? '';
+    final String emPhone = data['emergencyContactPhone'] ?? '';
+    final String emRelation = data['emergencyContactRelation'] ?? '';
+    final bool hasEmergencyContact = emName.isNotEmpty;
 
-                _sectionTitle('CONTACT INFORMATION'),
-                const SizedBox(height: 12),
-
-                _contactCard(
-                  icon: Icons.email,
-                  title: 'Email',
-                  subtitle: email,
-                  trailingIcon: Icons.lock,
-                ),
-                const SizedBox(height: 10),
-                _contactCard(
-                  icon: Icons.phone,
-                  title: 'Phone Number',
-                  subtitle: phone,
-                ),
-                const SizedBox(height: 10),
-                _contactCard(
-                  icon: Icons.location_on,
-                  title: 'Location',
-                  subtitle: address,
-                ),
-
-                const SizedBox(height: 24),
-
-                _sectionTitle('EMERGENCY CONTACT'),
-                const SizedBox(height: 12),
-
-                hasEmergencyContact
-                    ? _emergencyContactCard(
-                  name: emName,
-                  phone: emPhone,
-                  relation: emRelation,
-                )
-                    : _emptyEmergencyContactCard(),
-              ],
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          const SizedBox(height: 16),
+          CircleAvatar(
+            radius: 48,
+            backgroundColor: Colors.grey.shade300,
+            child: const Icon(Icons.person, size: 50, color: Colors.grey),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            name,
+            style: const TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+              color: Colors.black87,
             ),
-          );
-        },
+          ),
+          const SizedBox(height: 4),
+          Divider(color: Colors.grey.shade300),
+          const SizedBox(height: 16),
+
+          _sectionTitle('CONTACT INFORMATION'),
+          const SizedBox(height: 12),
+
+          _contactCard(
+            icon: Icons.email,
+            title: 'Email',
+            subtitle: email,
+            trailingIcon: Icons.lock,
+          ),
+          const SizedBox(height: 10),
+          _contactCard(
+            icon: Icons.phone,
+            title: 'Phone Number',
+            subtitle: phone,
+          ),
+          const SizedBox(height: 10),
+          _contactCard(
+            icon: Icons.location_on,
+            title: 'Location',
+            subtitle: address,
+          ),
+
+          const SizedBox(height: 24),
+
+          _sectionTitle('EMERGENCY CONTACT'),
+          const SizedBox(height: 12),
+
+          hasEmergencyContact
+              ? _emergencyContactCard(
+            name: emName,
+            phone: emPhone,
+            relation: emRelation,
+          )
+              : _emptyEmergencyContactCard(),
+        ],
       ),
     );
   }

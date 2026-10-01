@@ -2,9 +2,9 @@ import 'package:flutter/material.dart'; // Flutter's core UI toolkit
 import 'package:firebase_auth/firebase_auth.dart'; // to log the user in with Firebase
 import 'package:cloud_firestore/cloud_firestore.dart'; // to check the user's role in authIndex
 import 'rescue_home_screen.dart'; // Rescue Team Dashboard, shown after successful login
-import 'rescue_registration_screen.dart'; // used for "New member? Join here" link
-import '../citizen_screens/forgotpassword.dart'; // shared Forgot Password screen, one folder up in lib/
-import '../Services/fcm_token_service.dart'; // NEW — save FCM token for leader/member too, same as citizen users
+import 'member_verification_screen.dart'; // used for "New member? Join here" link
+import 'pending_approval_screen.dart'; // NEW — pending leaders/members get sent here instead of a dead-end error
+import '/citizen_screens/forgotpassword.dart'; // shared Forgot Password screen, one folder up in lib/
 
 class RescueLoginScreen extends StatefulWidget {
   const RescueLoginScreen({super.key});
@@ -76,7 +76,7 @@ class _RescueLoginScreenState extends State<RescueLoginScreen> {
 
       final String? userRole = authIndexDoc.data()?['role'];
 
-      // UPDATED CONDITION: Allows rescue_member, rescue_leader, and rescue_team roles
+      // Allows rescue_member, rescue_leader, and rescue_team roles
       if (!authIndexDoc.exists ||
           (userRole != 'rescue_member' && userRole != 'rescue_leader' && userRole != 'rescue_team')) {
         // this account exists in Firebase Auth, but is NOT registered as rescue team
@@ -91,45 +91,29 @@ class _RescueLoginScreenState extends State<RescueLoginScreen> {
           .doc(uid)
           .get();
 
-      final userData = userDoc.data();
-      String status = userData?['status'] ?? 'pending';
-      final bool loggingInAsLeader = userData?['isLeader'] ?? (userData?['role'] == 'rescue_leader');
-
-      // FIXED: this used to ONLY look at rescueTeamUsers/{uid}.status. But
-      // that field can get out of sync with the actual approval — if
-      // whatever approves teams updates rescueTeams/{teamId}.status instead
-      // (the team-level record), rescueTeamUsers/{uid}.status is left stuck
-      // on 'pending' forever, so a leader whose team really IS approved
-      // keeps seeing "still awaiting admin approval". So if the user-level
-      // doc isn't showing approved, cross-check the team-level doc too.
-      // (Only applies to leaders — members are auto-approved with
-      // status:'active' at registration and don't need this gate.)
-      if (loggingInAsLeader && status != 'approved') {
-        final String crossCheckTeamId = userData?['teamId'] ?? '';
-        if (crossCheckTeamId.isNotEmpty) {
-          final teamDoc = await FirebaseFirestore.instance
-              .collection('rescueTeams')
-              .doc(crossCheckTeamId)
-              .get();
-          final String teamStatus = teamDoc.data()?['status'] ?? status;
-          if (teamStatus == 'approved') {
-            // sync it back onto the user doc so future logins don't need
-            // this cross-check again
-            await FirebaseFirestore.instance
-                .collection('rescueTeamUsers')
-                .doc(uid)
-                .update({'status': 'approved'});
-            status = 'approved';
-          } else if (teamStatus == 'rejected') {
-            status = 'rejected';
-          }
-        }
+      // FIXED: distinguish "document genuinely missing" from "document exists
+      // but status field says pending" — these used to be silently treated
+      // the same way, which is exactly what made a past registration bug
+      // show a misleading "awaiting approval" message.
+      if (!userDoc.exists) {
+        await FirebaseAuth.instance.signOut();
+        _showError('Account data not found. Please contact support.');
+        return;
       }
 
+      final userData = userDoc.data();
+      final String status = userData?['status'] ?? 'pending';
+
       if (status == 'pending') {
-        // leader registered but admin hasn't approved the team yet
-        await FirebaseAuth.instance.signOut();
-        _showError('Your team is still awaiting admin approval.');
+        // FIXED: instead of a dead-end error + forced sign-out, send them to
+        // PendingApprovalScreen, which live-listens for admin approval and
+        // will move them into the dashboard automatically once approved.
+        if (mounted) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (_) => const PendingApprovalScreen()),
+          );
+        }
         return;
       }
 
@@ -140,15 +124,18 @@ class _RescueLoginScreenState extends State<RescueLoginScreen> {
       }
 
       // Fetch dynamic fields required by RescueTeamHomeScreen
-      final bool isLeader = loggingInAsLeader;
+      // FIXED: fallback now checks 'rescue_leader' (the real stored value),
+      // not 'leader' (a value that's never actually written anywhere)
+      final bool isLeader = userData?['isLeader'] ?? (userData?['role'] == 'rescue_leader');
       final String teamId = userData?['teamId'] ?? '';
       final String teamName = userData?['teamName'] ?? 'Rescue Team';
 
-      // NEW — save this device's FCM token into rescueTeamUsers/{uid}, exactly
-      // like it's done for citizen users into citizens/{uid}. Without this the
-      // leader (and members) never receive push notifications since their
-      // token was never being saved anywhere.
-      await FcmTokenService.saveFCMToken(uid, collection: 'rescueTeamUsers');
+      // Mark this user as online now that login is confirmed valid. Used by
+      // the "Assign Team Members" screen to show Available/Busy/Offline.
+      await FirebaseFirestore.instance.collection('rescueTeamUsers').doc(uid).update({
+        'isOnline': true,
+        'lastSeenAt': FieldValue.serverTimestamp(),
+      });
 
       // STEP 4: navigate to Rescue Team Dashboard with dynamic params
       if (mounted) {
@@ -232,7 +219,7 @@ class _RescueLoginScreenState extends State<RescueLoginScreen> {
 
               // ── Screen title ──
               const Text(
-                'Team Member Login',
+                'Rescue Team Login',
                 style: TextStyle(
                   fontSize: 26,
                   fontWeight: FontWeight.bold,
@@ -369,7 +356,7 @@ class _RescueLoginScreenState extends State<RescueLoginScreen> {
                   Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (_) => const RescueRegistrationScreen(),
+                      builder: (_) => const MemberVerificationScreen(),
                     ),
                   );
                 },

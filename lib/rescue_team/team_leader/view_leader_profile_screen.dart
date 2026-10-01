@@ -1,19 +1,119 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:smart_disaster_management_system/database/rescue_dao.dart'; // adjust path if needed
 import 'rescue_leader_personal_detail_screen.dart';
 import 'rescue_leader_settings_screen.dart';
 import '/citizen_screens/feedback_screen.dart';
 import '/citizen_screens/feedback_success_screen.dart';
 
-class RescueProfileScreen extends StatelessWidget {
+// UI, menu, and logout logic are exactly the same as before. The only
+// addition: the header (name/email/photo) is shown instantly from the
+// SQLite cache (works offline too), then silently refreshed + re-cached
+// whenever the live Firestore stream has new data.
+class RescueProfileScreen extends StatefulWidget {
   const RescueProfileScreen({super.key});
 
+  @override
+  State<RescueProfileScreen> createState() => _RescueProfileScreenState();
+}
+
+class _RescueProfileScreenState extends State<RescueProfileScreen> {
   static const Color kGreen = Color(0xFF1B5E38);
+
+  String _name = 'Rescue Leader';
+  String _email = '';
+  String? _photoUrl;
+  bool _loadedOnce = false;
+  StreamSubscription? _sub;
+
+  @override
+  void initState() {
+    super.initState();
+    _init();
+  }
+
+  Future<void> _init() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) {
+      if (mounted) setState(() => _loadedOnce = true);
+      return;
+    }
+
+    // 1) Show cache immediately — this works even with zero internet.
+    final cached = await RescueDao.getCachedProfile(uid);
+    if (cached != null && mounted) {
+      final cachedName = (cached['name'] ?? '').toString().trim();
+      setState(() {
+        _name = cachedName.isNotEmpty ? cachedName : 'Rescue Leader';
+        _email = (cached['email'] ?? '').toString();
+        _photoUrl = (cached['photoUrl'] ?? '').toString();
+        _loadedOnce = true;
+      });
+    }
+
+    // 2) Live Firestore stream — same document as the original
+    // StreamBuilder, just now we cache the result and call setState
+    // ourselves.
+    _sub = FirebaseFirestore.instance
+        .collection('rescueTeamUsers')
+        .doc(uid)
+        .snapshots()
+        .listen((snap) async {
+      final data = snap.data() ?? {};
+      final name = (data['name'] ?? '').toString().trim().isNotEmpty
+          ? data['name'].toString()
+          : 'Rescue Leader';
+      final email = (data['email'] ?? FirebaseAuth.instance.currentUser?.email ?? '').toString();
+      final photoUrl = (data['photoUrl'] ?? '').toString();
+
+      // We only own the header fields here — the full profile (specialization,
+      // blood group, etc.) is cached by RescuePersonalDetailsScreen. To avoid
+      // overwriting those fields with blanks, read what's cached first and
+      // merge just the header fields into it.
+      final existing = await RescueDao.getCachedProfile(uid);
+      await RescueDao.cacheProfile(
+        uid: uid,
+        name: name,
+        email: email,
+        phone: (existing?['phone'] ?? '').toString(),
+        emergencyContact: (existing?['emergencyContact'] ?? '').toString(),
+        personalAddress: (existing?['personalAddress'] ?? '').toString(),
+        specialization: (existing?['specialization'] ?? '').toString(),
+        bloodGroup: (existing?['bloodGroup'] ?? '').toString(),
+        teamName: (existing?['teamName'] ?? '').toString(),
+        teamId: (existing?['teamId'] ?? '').toString(),
+        officialAddress: (existing?['officialAddress'] ?? '').toString(),
+        role: (existing?['role'] ?? 'rescue_leader').toString(),
+        isLeader: true,
+        photoUrl: photoUrl,
+        createdAt: (existing?['createdAt'] ?? '').toString(),
+      );
+
+      if (mounted) {
+        setState(() {
+          _name = name;
+          _email = email;
+          _photoUrl = photoUrl;
+          _loadedOnce = true;
+        });
+      }
+    }, onError: (_) {
+      // Offline — the cached header is already showing, nothing to do here.
+      if (mounted) setState(() => _loadedOnce = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final String? uid = FirebaseAuth.instance.currentUser?.uid;
+    final uid = FirebaseAuth.instance.currentUser?.uid;
 
     return Scaffold(
       backgroundColor: Colors.white,
@@ -22,82 +122,63 @@ class RescueProfileScreen extends StatelessWidget {
           Expanded(
             child: uid == null
                 ? const Center(child: Text('User not logged in'))
-                : StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-              stream: FirebaseFirestore.instance
-                  .collection('rescueTeamUsers')
-                  .doc(uid)
-                  .snapshots(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator(color: Colors.white));
-                }
-                final data = snapshot.data?.data() ?? {};
-                // If the name field is genuinely missing from Firestore (not just
-                // still loading), fall back to something readable instead of a
-                // permanent "Loading..." label.
-                final String name = (data['name'] ?? '').toString().trim().isNotEmpty
-                    ? data['name']
-                    : 'Rescue Leader';
-                final String email = data['email'] ?? FirebaseAuth.instance.currentUser?.email ?? '';
-                final String? photoUrl = data['photoUrl'];
-
-                return CustomScrollView(
-                  slivers: [
-                    SliverToBoxAdapter(child: _header(name, email, photoUrl)),
-                    SliverToBoxAdapter(
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 24, 16, 16),
-                        child: Column(
-                          children: [
-                            _menuTile(
-                              context,
-                              icon: Icons.person_outline,
-                              title: 'Personal Details',
-                              subtitle: 'View your & team profile information',
-                              onTap: () => Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                    builder: (_) => const RescuePersonalDetailsScreen()),
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            _menuTile(
-                              context,
-                              icon: Icons.settings_outlined,
-                              title: 'Settings',
-                              subtitle: 'Edit profile & notification preferences',
-                              onTap: () => Navigator.push(
-                                context,
-                                MaterialPageRoute(builder: (_) => const RescueSettingsScreen(isLeader: true)),
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            _menuTile(
-                              context,
-                              icon: Icons.feedback_outlined,
-                              title: 'Feedback',
-                              subtitle: 'Send your valuable feedback',
-                              onTap: () => Navigator.push(
-                                context,
-                                MaterialPageRoute(builder: (_) => const FeedbackScreen()),
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            _menuTile(
-                              context,
-                              icon: Icons.logout,
-                              title: 'Logout',
-                              subtitle: 'Sign out from your account',
-                              isDestructive: true,
-                              onTap: () => _confirmLogout(context),
-                            ),
-                          ],
+                : !_loadedOnce
+                ? const Center(child: CircularProgressIndicator(color: Colors.white))
+                : CustomScrollView(
+              slivers: [
+                SliverToBoxAdapter(child: _header(_name, _email, _photoUrl)),
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 24, 16, 16),
+                    child: Column(
+                      children: [
+                        _menuTile(
+                          context,
+                          icon: Icons.person_outline,
+                          title: 'Personal Details',
+                          subtitle: 'View your & team profile information',
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (_) => const RescuePersonalDetailsScreen()),
+                          ),
                         ),
-                      ),
+                        const SizedBox(height: 12),
+                        _menuTile(
+                          context,
+                          icon: Icons.settings_outlined,
+                          title: 'Settings',
+                          subtitle: 'Edit profile & notification preferences',
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => const RescueSettingsScreen(isLeader: true)),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        _menuTile(
+                          context,
+                          icon: Icons.feedback_outlined,
+                          title: 'Feedback',
+                          subtitle: 'Send your valuable feedback',
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => const FeedbackScreen()),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        _menuTile(
+                          context,
+                          icon: Icons.logout,
+                          title: 'Logout',
+                          subtitle: 'Sign out from your account',
+                          isDestructive: true,
+                          onTap: () => _confirmLogout(context),
+                        ),
+                      ],
                     ),
-                  ],
-                );
-              },
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -216,6 +297,19 @@ class RescueProfileScreen extends StatelessWidget {
     );
 
     if (confirmed == true) {
+      // Mark offline BEFORE signing out — once signed out we lose permission
+      // to write this doc, and currentUser becomes null.
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid != null) {
+        try {
+          await FirebaseFirestore.instance.collection('rescueTeamUsers').doc(uid).update({
+            'isOnline': false,
+            'lastSeenAt': FieldValue.serverTimestamp(),
+          });
+        } catch (_) {
+          // Non-critical — don't block logout if this write fails.
+        }
+      }
       await FirebaseAuth.instance.signOut();
       if (context.mounted) {
         // This only signs out the CURRENT device/account (leader or member,

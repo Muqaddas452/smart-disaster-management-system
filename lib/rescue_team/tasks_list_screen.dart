@@ -1,14 +1,17 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:smart_disaster_management_system/database/rescue_dao.dart'; // adjust path if needed
 import 'view_task_screen.dart';
 import 'add_test_task_screen.dart'; // DEBUG ONLY — remove this import + FAB before final submission
 
-// Shared "My Tasks" screen for BOTH leader and member.
-// - Leader sees every task dispatched to their team (query by teamId).
-// - Member sees only tasks specifically assigned to them (assignedMemberIds contains uid).
-// Which query runs is decided automatically by reading the user's own
-// rescueTeamUsers document (isLeader + teamId) once on load.
+// Shared "My Tasks" screen for BOTH leader and member. UI, tabs, and the
+// leader/member query split are all exactly the same as before. The only
+// addition: the task list is shown instantly from the SQLite cache (works
+// offline too), then silently refreshed + re-cached whenever the live
+// Firestore stream has new data. Role/teamId also fall back to the cached
+// profile if the initial lookup fails while offline.
 class TasksListScreen extends StatefulWidget {
   const TasksListScreen({super.key});
 
@@ -24,6 +27,10 @@ class _TasksListScreenState extends State<TasksListScreen> {
   String? _teamId;
   String? _uid;
 
+  List<Map<String, dynamic>> _tasks = [];
+  bool _tasksLoadedOnce = false;
+  StreamSubscription? _tasksSub;
+
   @override
   void initState() {
     super.initState();
@@ -38,21 +45,85 @@ class _TasksListScreenState extends State<TasksListScreen> {
       return;
     }
 
-    final doc = await FirebaseFirestore.instance.collection('rescueTeamUsers').doc(uid).get();
-    final data = doc.data() ?? {};
-    _teamId = data['teamId'];
-    final role = data['role'] ?? '';
-    _isLeader = data['isLeader'] == true || role == 'rescue_leader' || role == 'team_leader';
+    try {
+      final doc = await FirebaseFirestore.instance.collection('rescueTeamUsers').doc(uid).get();
+      final data = doc.data() ?? {};
+      _teamId = data['teamId'];
+      final role = data['role'] ?? '';
+      _isLeader = data['isLeader'] == true || role == 'rescue_leader' || role == 'team_leader';
+    } catch (_) {
+      // Offline and no local Firestore cache for this doc — fall back to
+      // our own SQLite cache of the profile so the correct query still runs.
+      final cachedProfile = await RescueDao.getCachedProfile(uid);
+      if (cachedProfile != null) {
+        _teamId = cachedProfile['teamId'];
+        _isLeader = cachedProfile['isLeader'] == 1;
+      }
+    }
 
     if (mounted) setState(() => _isLoading = false);
+    _startTaskListening();
   }
 
-  Stream<QuerySnapshot<Map<String, dynamic>>> _taskStream() {
-    final tasks = FirebaseFirestore.instance.collection('tasks');
-    if (_isLeader) {
-      return tasks.where('teamId', isEqualTo: _teamId).snapshots();
-    }
-    return tasks.where('assignedMemberIds', arrayContains: _uid).snapshots();
+  void _startTaskListening() {
+    // 1) Show cached tasks immediately — works offline too.
+    RescueDao.getCachedTasks().then((cached) {
+      if (cached.isNotEmpty && mounted) {
+        setState(() {
+          _tasks = cached;
+          _tasksLoadedOnce = true;
+        });
+      }
+    });
+
+    // 2) Live Firestore stream — same query as before, just now we cache
+    // the results and call setState ourselves.
+    final tasksRef = FirebaseFirestore.instance.collection('tasks');
+    final Stream<QuerySnapshot<Map<String, dynamic>>> stream = _isLeader
+        ? tasksRef.where('teamId', isEqualTo: _teamId).snapshots()
+        : tasksRef.where('assignedMemberIds', arrayContains: _uid).snapshots();
+
+    _tasksSub = stream.listen((snap) async {
+      final tasks = snap.docs.map((d) {
+        final data = d.data();
+        final createdAt = data['createdAt'];
+        return {
+          'taskId': d.id,
+          'type': data['type'] ?? 'Task',
+          'priority': (data['priority'] ?? 'medium').toString(),
+          'address': data['address'] ?? 'Address not available',
+          'description': data['description'] ?? '',
+          'status': data['status'] ?? 'dispatched',
+          'teamId': data['teamId'] ?? '',
+          'assignedMemberIds': data['assignedMemberIds'] ?? [],
+          'assignedMembers': data['assignedMembers'] ?? [],
+          'latitude': (data['latitude'] as num?)?.toDouble(),
+          'longitude': (data['longitude'] as num?)?.toDouble(),
+          'createdAt': (createdAt is Timestamp) ? createdAt.toDate().toIso8601String() : '',
+          'statusOverriddenBy': data['statusOverriddenBy'],
+          'statusOverriddenAt': (data['statusOverriddenAt'] is Timestamp)
+              ? (data['statusOverriddenAt'] as Timestamp).toDate().toIso8601String()
+              : null,
+        };
+      }).toList();
+
+      await RescueDao.cacheTasks(tasks);
+      if (mounted) {
+        setState(() {
+          _tasks = tasks;
+          _tasksLoadedOnce = true;
+        });
+      }
+    }, onError: (_) {
+      // Offline — the cached list is already showing, nothing to do here.
+      if (mounted) setState(() => _tasksLoadedOnce = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _tasksSub?.cancel();
+    super.dispose();
   }
 
   @override
@@ -97,39 +168,34 @@ class _TasksListScreenState extends State<TasksListScreen> {
             Expanded(
               child: (_isLoading || _uid == null)
                   ? Center(child: _uid == null ? const Text('User not logged in') : const CircularProgressIndicator(color: kGreen))
-                  : StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                stream: _taskStream(),
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(child: CircularProgressIndicator(color: kGreen));
-                  }
-                  if (snapshot.hasError) {
-                    return Center(child: Text('Error: ${snapshot.error}'));
-                  }
+                  : !_tasksLoadedOnce
+                  ? const Center(child: CircularProgressIndicator(color: kGreen))
+                  : Builder(builder: (context) {
+                // "Resolved" tab = anything closed out, whether completed
+                // or rejected by the leader — neither needs further action.
+                final active = _tasks
+                    .where((d) => !['resolved', 'rejected'].contains(d['status'] ?? ''))
+                    .toList();
+                final resolved = _tasks
+                    .where((d) => ['resolved', 'rejected'].contains(d['status'] ?? ''))
+                    .toList();
 
-                  final docs = snapshot.data?.docs ?? [];
-                  final active = docs.where((d) => (d.data()['status'] ?? '') != 'resolved').toList();
-                  final resolved = docs.where((d) => (d.data()['status'] ?? '') == 'resolved').toList();
+                // Newest first
+                int byCreatedDesc(Map<String, dynamic> a, Map<String, dynamic> b) {
+                  final ta = a['createdAt']?.toString() ?? '';
+                  final tb = b['createdAt']?.toString() ?? '';
+                  return tb.compareTo(ta);
+                }
+                active.sort(byCreatedDesc);
+                resolved.sort(byCreatedDesc);
 
-                  // Newest first
-                  int byCreatedDesc(QueryDocumentSnapshot<Map<String, dynamic>> a,
-                      QueryDocumentSnapshot<Map<String, dynamic>> b) {
-                    final ta = a.data()['createdAt'];
-                    final tb = b.data()['createdAt'];
-                    if (ta is Timestamp && tb is Timestamp) return tb.compareTo(ta);
-                    return 0;
-                  }
-                  active.sort(byCreatedDesc);
-                  resolved.sort(byCreatedDesc);
-
-                  return TabBarView(
-                    children: [
-                      _taskList(active, emptyText: 'No active tasks right now'),
-                      _taskList(resolved, emptyText: 'No resolved tasks yet'),
-                    ],
-                  );
-                },
-              ),
+                return TabBarView(
+                  children: [
+                    _taskList(active, emptyText: 'No active tasks right now'),
+                    _taskList(resolved, emptyText: 'No resolved tasks yet'),
+                  ],
+                );
+              }),
             ),
           ],
         ),
@@ -152,7 +218,7 @@ class _TasksListScreenState extends State<TasksListScreen> {
     );
   }
 
-  Widget _taskList(List<QueryDocumentSnapshot<Map<String, dynamic>>> docs, {required String emptyText}) {
+  Widget _taskList(List<Map<String, dynamic>> docs, {required String emptyText}) {
     if (docs.isEmpty) {
       return Center(child: Text(emptyText, style: const TextStyle(color: Colors.black45)));
     }
@@ -160,8 +226,8 @@ class _TasksListScreenState extends State<TasksListScreen> {
       padding: const EdgeInsets.all(16),
       itemCount: docs.length,
       itemBuilder: (context, i) {
-        final data = docs[i].data();
-        final taskId = docs[i].id;
+        final data = docs[i];
+        final taskId = data['taskId'] as String;
         return _taskCard(context, taskId, data);
       },
     );
@@ -182,15 +248,18 @@ class _TasksListScreenState extends State<TasksListScreen> {
     final colors = priorityColors[priority] ?? priorityColors['medium']!;
 
     String timeAgo = '-';
-    final createdAt = data['createdAt'];
-    if (createdAt is Timestamp) {
-      final diff = DateTime.now().difference(createdAt.toDate());
-      if (diff.inMinutes < 60) {
-        timeAgo = '${diff.inMinutes} mins ago';
-      } else if (diff.inHours < 24) {
-        timeAgo = '${diff.inHours} hr ago';
-      } else {
-        timeAgo = '${diff.inDays} days ago';
+    final createdAtStr = data['createdAt']?.toString();
+    if (createdAtStr != null && createdAtStr.isNotEmpty) {
+      final createdAt = DateTime.tryParse(createdAtStr);
+      if (createdAt != null) {
+        final diff = DateTime.now().difference(createdAt);
+        if (diff.inMinutes < 60) {
+          timeAgo = '${diff.inMinutes} mins ago';
+        } else if (diff.inHours < 24) {
+          timeAgo = '${diff.inHours} hr ago';
+        } else {
+          timeAgo = '${diff.inDays} days ago';
+        }
       }
     }
 
@@ -250,7 +319,7 @@ class _TasksListScreenState extends State<TasksListScreen> {
                   MaterialPageRoute(builder: (_) => ViewTaskScreen(taskId: taskId)),
                 );
               },
-              child: Text(status == 'resolved' ? 'View summary' : 'View details',
+              child: Text(['resolved', 'rejected'].contains(status) ? 'View summary' : 'View details',
                   style: const TextStyle(color: kGreen, fontWeight: FontWeight.bold)),
             ),
           ),

@@ -1,21 +1,121 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:smart_disaster_management_system/database/rescue_dao.dart'; // adjust path if needed
 import 'rescue_member_personal_detail_screen.dart';
 import '../team_leader/rescue_leader_settings_screen.dart';
 import '../team_leader/rescue_leader_notification_preferences_screen.dart';
 import '/citizen_screens/feedback_screen.dart';
 import '/citizen_screens/feedback_success_screen.dart';
 
-
-class ViewMemberProfileScreen extends StatelessWidget {
+// UI, menu, and logout logic are exactly the same as before. The only
+// addition: the header (name/email/photo) is shown instantly from the
+// SQLite cache (works offline too), then silently refreshed + re-cached
+// whenever the live Firestore stream has new data.
+class ViewMemberProfileScreen extends StatefulWidget {
   const ViewMemberProfileScreen({super.key});
 
+  @override
+  State<ViewMemberProfileScreen> createState() => _ViewMemberProfileScreenState();
+}
+
+class _ViewMemberProfileScreenState extends State<ViewMemberProfileScreen> {
   static const Color kGreen = Color(0xFF1B5E38);
+
+  String _name = 'Rescue Member';
+  String _email = '';
+  String? _photoUrl;
+  bool _loadedOnce = false;
+  StreamSubscription? _sub;
+
+  @override
+  void initState() {
+    super.initState();
+    _init();
+  }
+
+  Future<void> _init() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) {
+      if (mounted) setState(() => _loadedOnce = true);
+      return;
+    }
+
+    // 1) Show cache immediately — this works even with zero internet.
+    final cached = await RescueDao.getCachedProfile(uid);
+    if (cached != null && mounted) {
+      final cachedName = (cached['name'] ?? '').toString().trim();
+      setState(() {
+        _name = cachedName.isNotEmpty ? cachedName : 'Rescue Member';
+        _email = (cached['email'] ?? '').toString();
+        _photoUrl = (cached['photoUrl'] ?? '').toString();
+        _loadedOnce = true;
+      });
+    }
+
+    // 2) Live Firestore stream — same document as the original
+    // StreamBuilder, just now we cache the result and call setState
+    // ourselves.
+    _sub = FirebaseFirestore.instance
+        .collection('rescueTeamUsers')
+        .doc(uid)
+        .snapshots()
+        .listen((snap) async {
+      final data = snap.data() ?? {};
+      final name = (data['name'] ?? '').toString().trim().isNotEmpty
+          ? data['name'].toString()
+          : 'Rescue Member';
+      final email = (data['email'] ?? FirebaseAuth.instance.currentUser?.email ?? '').toString();
+      final photoUrl = (data['photoUrl'] ?? '').toString();
+
+      // We only own the header fields here — the full profile (specialization,
+      // blood group, resolved team name, etc.) is cached by
+      // RescueMemberPersonalDetailsScreen. To avoid overwriting those fields
+      // with blanks, read what's cached first and merge just the header
+      // fields into it.
+      final existing = await RescueDao.getCachedProfile(uid);
+      await RescueDao.cacheProfile(
+        uid: uid,
+        name: name,
+        email: email,
+        phone: (existing?['phone'] ?? '').toString(),
+        emergencyContact: (existing?['emergencyContact'] ?? '').toString(),
+        personalAddress: (existing?['personalAddress'] ?? '').toString(),
+        specialization: (existing?['specialization'] ?? '').toString(),
+        bloodGroup: (existing?['bloodGroup'] ?? '').toString(),
+        teamName: (existing?['teamName'] ?? '').toString(),
+        teamId: (existing?['teamId'] ?? '').toString(),
+        officialAddress: (existing?['officialAddress'] ?? '').toString(),
+        role: (existing?['role'] ?? 'rescue_member').toString(),
+        isLeader: false,
+        photoUrl: photoUrl,
+        createdAt: (existing?['createdAt'] ?? '').toString(),
+      );
+
+      if (mounted) {
+        setState(() {
+          _name = name;
+          _email = email;
+          _photoUrl = photoUrl;
+          _loadedOnce = true;
+        });
+      }
+    }, onError: (_) {
+      // Offline — the cached header is already showing, nothing to do here.
+      if (mounted) setState(() => _loadedOnce = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final String? uid = FirebaseAuth.instance.currentUser?.uid;
+    final uid = FirebaseAuth.instance.currentUser?.uid;
 
     return Scaffold(
       backgroundColor: Colors.white,
@@ -24,79 +124,63 @@ class ViewMemberProfileScreen extends StatelessWidget {
           Expanded(
             child: uid == null
                 ? const Center(child: Text('User not logged in'))
-                : StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-              stream: FirebaseFirestore.instance
-                  .collection('rescueTeamUsers')
-                  .doc(uid)
-                  .snapshots(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator(color: kGreen));
-                }
-                final data = snapshot.data?.data() ?? {};
-                final String name = (data['name'] ?? '').toString().trim().isNotEmpty
-                    ? data['name']
-                    : 'Rescue Member';
-                final String email = data['email'] ?? FirebaseAuth.instance.currentUser?.email ?? '';
-                final String? photoUrl = data['photoUrl'];
-
-                return CustomScrollView(
-                  slivers: [
-                    SliverToBoxAdapter(child: _header(name, email, photoUrl)),
-                    SliverToBoxAdapter(
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 24, 16, 16),
-                        child: Column(
-                          children: [
-                            _menuTile(
-                              context,
-                              icon: Icons.person_outline,
-                              title: 'Personal Details',
-                              subtitle: 'View your profile & team information',
-                              onTap: () => Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                    builder: (_) => const RescueMemberPersonalDetailsScreen()),
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            _menuTile(
-                              context,
-                              icon: Icons.settings_outlined,
-                              title: 'Settings',
-                              subtitle: 'Edit profile & notification preferences',
-                              onTap: () => Navigator.push(
-                                context,
-                                MaterialPageRoute(builder: (_) => const RescueSettingsScreen(isLeader: false)),
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            _menuTile(
-                              context,
-                              icon: Icons.feedback_outlined,
-                              title: 'Feedback',
-                              subtitle: 'Send your valuable feedback',
-                              onTap: () => Navigator.push(
-                                context,
-                                MaterialPageRoute(builder: (_) => const FeedbackScreen()),
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            _menuTile(
-                              context,
-                              icon: Icons.logout,
-                              title: 'Logout',
-                              subtitle: 'Sign out from your account',
-                              isDestructive: true,
-                              onTap: () => _confirmLogout(context),
-                            ),
-                          ],
+                : !_loadedOnce
+                ? const Center(child: CircularProgressIndicator(color: kGreen))
+                : CustomScrollView(
+              slivers: [
+                SliverToBoxAdapter(child: _header(_name, _email, _photoUrl)),
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 24, 16, 16),
+                    child: Column(
+                      children: [
+                        _menuTile(
+                          context,
+                          icon: Icons.person_outline,
+                          title: 'Personal Details',
+                          subtitle: 'View your profile & team information',
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (_) => const RescueMemberPersonalDetailsScreen()),
+                          ),
                         ),
-                      ),
+                        const SizedBox(height: 12),
+                        _menuTile(
+                          context,
+                          icon: Icons.settings_outlined,
+                          title: 'Settings',
+                          subtitle: 'Edit profile & notification preferences',
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => const RescueSettingsScreen(isLeader: false)),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        _menuTile(
+                          context,
+                          icon: Icons.feedback_outlined,
+                          title: 'Feedback',
+                          subtitle: 'Send your valuable feedback',
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => const FeedbackScreen()),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        _menuTile(
+                          context,
+                          icon: Icons.logout,
+                          title: 'Logout',
+                          subtitle: 'Sign out from your account',
+                          isDestructive: true,
+                          onTap: () => _confirmLogout(context),
+                        ),
+                      ],
                     ),
-                  ],
-                );
-              },
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -228,6 +312,19 @@ class ViewMemberProfileScreen extends StatelessWidget {
     );
 
     if (confirmed == true) {
+      // Mark offline BEFORE signing out — once signed out we lose permission
+      // to write this doc, and currentUser becomes null.
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid != null) {
+        try {
+          await FirebaseFirestore.instance.collection('rescueTeamUsers').doc(uid).update({
+            'isOnline': false,
+            'lastSeenAt': FieldValue.serverTimestamp(),
+          });
+        } catch (_) {
+          // Non-critical — don't block logout if this write fails.
+        }
+      }
       await FirebaseAuth.instance.signOut();
       if (context.mounted) {
         Navigator.of(context).popUntil((route) => route.isFirst);

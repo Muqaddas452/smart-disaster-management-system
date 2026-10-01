@@ -554,20 +554,20 @@ class _DisasterMapState extends State<DisasterMap> {
             right: 20,
             child: Card(
               color: Colors.red.shade50,
-              elevation: 6,
+              elevation: 4,
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(10),
                 side: BorderSide(color: Colors.red.shade200),
               ),
               child: Padding(
-                padding: const EdgeInsets.all(14),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
                       children: [
-                        const Icon(Icons.warning_rounded, color: Colors.red),
-                        const SizedBox(width: 8),
+                        const Icon(Icons.warning_rounded, color: Colors.red, size: 16),
+                        const SizedBox(width: 6),
                         Expanded(
                           child: Text(
                             widget.isRescueView
@@ -578,26 +578,26 @@ class _DisasterMapState extends State<DisasterMap> {
                             style: const TextStyle(
                               fontWeight: FontWeight.bold,
                               color: Colors.red,
-                              fontSize: 15,
+                              fontSize: 12,
                             ),
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 4),
                     Text(
                       widget.isRescueView
                           ? "This zone has been reported as affected. Ensure your team is prepared to respond."
                           : "You are currently inside an affected zone.",
-                      style: const TextStyle(fontSize: 13),
+                      style: const TextStyle(fontSize: 11),
                     ),
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 3),
                     Text(
                       widget.isRescueView
                           ? "Recommended: ${_rescueActionFor(_currentAlertZone!.type)}"
                           : "Safety tip: ${_safetyTipFor(_currentAlertZone!.type)}",
                       style: const TextStyle(
-                        fontSize: 13,
+                        fontSize: 11,
                         fontStyle: FontStyle.italic,
                       ),
                     ),

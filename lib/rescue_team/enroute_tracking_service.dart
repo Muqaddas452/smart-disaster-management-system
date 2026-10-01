@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:geolocator/geolocator.dart';
 
 // Singleton service that streams the current device's location directly to
@@ -10,6 +11,11 @@ import 'package:geolocator/geolocator.dart';
 // If the app process is fully killed (swiped from recents), tracking will
 // stop automatically — going beyond that would require a native background
 // service, which is out of scope here.
+//
+// Location is written PER MEMBER (tasks/{taskId}.memberLocations.{uid}) —
+// not a single shared field — because a task can have several members
+// assigned to it at once, and each one's dot needs to move independently
+// on the map.
 class EnrouteTrackingService {
   EnrouteTrackingService._();
   static final EnrouteTrackingService instance = EnrouteTrackingService._();
@@ -41,6 +47,9 @@ class EnrouteTrackingService {
   }
 
   Future<bool> startTracking(String taskId) async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return false;
+
     // If we're already tracking a different task, stop that one first
     if (_subscription != null && _activeTaskId != taskId) {
       await stopTracking();
@@ -67,7 +76,7 @@ class EnrouteTrackingService {
     _subscription = Geolocator.getPositionStream(locationSettings: androidSettings)
         .listen((Position position) {
       FirebaseFirestore.instance.collection('tasks').doc(taskId).update({
-        'liveLocation': {
+        'memberLocations.$uid': {
           'lat': position.latitude,
           'lng': position.longitude,
           'updatedAt': FieldValue.serverTimestamp(),
@@ -94,5 +103,17 @@ class EnrouteTrackingService {
     if (_activeTaskId == taskId && currentStatus != 'enroute') {
       stopTracking();
     }
+  }
+
+  // Called when a task is marked resolved — removes every assigned member's
+  // last-known location from the task document so old dots don't linger on
+  // the map for a task that's already done.
+  static Future<void> clearAllMemberLocations(String taskId) async {
+    await FirebaseFirestore.instance.collection('tasks').doc(taskId).update({
+      'memberLocations': FieldValue.delete(),
+      // Also clear the old single-field name in case any older task
+      // documents still carry it, so nothing stale is left behind.
+      'liveLocation': FieldValue.delete(),
+    });
   }
 }

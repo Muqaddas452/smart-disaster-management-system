@@ -1,192 +1,207 @@
-import 'package:flutter/material.dart'; // Flutter's core UI toolkit
-import 'package:firebase_auth/firebase_auth.dart'; // to get the currently logged-in user
-import 'package:cloud_firestore/cloud_firestore.dart'; // to read the team's status from Firestore
-import 'rescue_login_screen.dart'; // FIXED: was pointing to the citizen LoginScreen, which doesn't
-// know how to handle 'rescue_leader'/'rescue_member' roles (see auth_service.dart) — an approved
-// leader tapping "Check Status" needs to land on the Rescue Team login, not the citizen one.
+import 'dart:async';
+import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import '/citizen_screens/login_screen.dart'; // only used for the rejected/exit path
+import 'rescue_home_screen.dart'; // Rescue Team Dashboard, shown automatically once approved
 
 class PendingApprovalScreen extends StatefulWidget {
-  // Stateful because we need to show a loading spinner while checking status
-  const PendingApprovalScreen({super.key}); // constructor, key used internally by Flutter
+  const PendingApprovalScreen({super.key});
 
   @override
   State<PendingApprovalScreen> createState() => _PendingApprovalScreenState();
 }
 
 class _PendingApprovalScreenState extends State<PendingApprovalScreen> {
-  // ---- Colors, same dark green + white theme as rest of the app ----
   static const MaterialColor _primaryGreen = Colors.green;
 
-  bool _isChecking = false; // true while we're checking Firestore for status update
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _statusSubscription;
+  String _status = 'pending'; // 'pending' | 'approved' | 'rejected'
+  bool _isProcessing = false; // true once we start navigating away / signing out
+
+  @override
+  void initState() {
+    super.initState();
+    _listenForApproval();
+  }
+
+  @override
+  void dispose() {
+    _statusSubscription?.cancel(); // stop listening once this screen is gone
+    super.dispose();
+  }
 
   // ======================================================
-  // LOGIC: Check if admin has approved this leader's team yet
+  // LOGIC: Live-listen to this leader's rescueTeamUsers doc.
+  // As soon as admin flips status to 'approved', jump straight
+  // into the Rescue Dashboard automatically — no manual "Check
+  // Status" tap, no re-login needed.
   // ======================================================
-  Future<void> _checkApprovalStatus() async {
-    setState(() => _isChecking = true); // show loading spinner on the button
+  void _listenForApproval() {
+    final User? currentUser = FirebaseAuth.instance.currentUser;
 
-    try {
-      final User? currentUser =
-          FirebaseAuth.instance.currentUser; // get the currently logged-in leader
+    if (currentUser == null) {
+      _showMessage('No user found. Please try logging in again.');
+      return;
+    }
 
-      if (currentUser == null) {
-        // if somehow no user is logged in, we can't check anything
-        _showMessage('No user found. Please try logging in again.');
-        return;
-      }
+    _statusSubscription = FirebaseFirestore.instance
+        .collection('rescueTeamUsers')
+        .doc(currentUser.uid)
+        .snapshots()
+        .listen((docSnapshot) async {
+      if (!docSnapshot.exists || _isProcessing) return;
 
-      // look up this leader's document in "rescueTeamUsers" using their uid
-      final docSnapshot = await FirebaseFirestore.instance
-          .collection('rescueTeamUsers')
-          .doc(currentUser.uid)
-          .get();
+      final data = docSnapshot.data();
+      final String status = data?['status'] ?? 'pending';
 
-      if (!docSnapshot.exists) {
-        // safety check, in case the document was somehow deleted
-        _showMessage('Could not find your registration record.');
-        return;
-      }
+      if (status == _status) return; // no real change, ignore duplicate events
 
-      String status = docSnapshot.data()?['status'] ?? 'pending';
-      // read the "status" field, default to 'pending' if it's missing for some reason
-
-      // FIXED: approval status was previously ONLY read from
-      // rescueTeamUsers/{uid}.status. If whatever approves teams updates the
-      // team-level rescueTeams/{teamId}.status instead (which is the natural
-      // place an admin reviews a "team"), rescueTeamUsers/{uid}.status is
-      // left stuck on 'pending' forever even though the team really is
-      // approved. So if the user-level doc isn't showing approved yet, we
-      // also cross-check the team-level doc as the source of truth.
-      if (status != 'approved') {
-        final String teamId = docSnapshot.data()?['teamId'] ?? '';
-        if (teamId.isNotEmpty) {
-          final teamDoc = await FirebaseFirestore.instance
-              .collection('rescueTeams')
-              .doc(teamId)
-              .get();
-          final String teamStatus = teamDoc.data()?['status'] ?? status;
-          if (teamStatus == 'approved') {
-            // sync it back onto the user doc so future reads (login, etc.)
-            // see the correct status without needing this cross-check again
-            await FirebaseFirestore.instance
-                .collection('rescueTeamUsers')
-                .doc(currentUser.uid)
-                .update({'status': 'approved'});
-            status = 'approved';
-          } else if (teamStatus == 'rejected') {
-            status = 'rejected';
-          }
-        }
-      }
+      setState(() => _status = status);
 
       if (status == 'approved') {
-        // admin has approved! send the leader to Rescue Team Login so they can sign in properly
-        _showMessage('Your team has been approved! Please log in.');
-
-        if (mounted) {
-          Navigator.pushAndRemoveUntil(
-            // pushAndRemoveUntil clears all previous screens, so back button won't return here
-            context,
-            MaterialPageRoute(builder: (context) => const RescueLoginScreen()),
-                (route) => false, // false means remove ALL previous routes
-          );
-        }
+        _isProcessing = true;
+        await _goToDashboard(currentUser.uid, data!);
       } else if (status == 'rejected') {
-        // admin rejected the request
         _showMessage('Your registration was rejected. Please contact support.');
-      } else {
-        // still pending, nothing to do yet
-        _showMessage('Still waiting for admin approval. Please check back later.');
       }
-    } catch (e) {
-      // catches any unexpected error, e.g. no internet connection
-      _showMessage('Something went wrong: $e');
+      // if still 'pending', nothing to do — UI already reflects the wait
+    }, onError: (e) {
+      _showMessage('Could not check approval status: $e');
+    });
+  }
+
+  // ======================================================
+  // LOGIC: Move into the Rescue Dashboard once approved.
+  // ======================================================
+  Future<void> _goToDashboard(String uid, Map<String, dynamic> userData) async {
+    _statusSubscription?.cancel(); // stop listening, we're leaving this screen
+
+    final bool isLeader = userData['isLeader'] ?? (userData['role'] == 'leader');
+    final String teamId = userData['teamId'] ?? '';
+    final String teamName = userData['teamName'] ?? 'Rescue Team';
+
+    // mark this leader online now, same as a normal login would
+    await FirebaseFirestore.instance.collection('rescueTeamUsers').doc(uid).update({
+      'isOnline': true,
+      'lastSeenAt': FieldValue.serverTimestamp(),
+    });
+
+    if (!mounted) return;
+
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(
+        builder: (_) => RescueTeamHomeScreen(
+          isLeader: isLeader,
+          teamId: teamId,
+          teamName: teamName,
+        ),
+      ),
+          (route) => false, // clears the whole stack — nothing left to "back" into
+    );
+  }
+
+  // ======================================================
+  // LOGIC: Only reachable when registration was rejected —
+  // signs the user out and sends them to a clean Login screen.
+  // ======================================================
+  Future<void> _signOutAndExit() async {
+    setState(() => _isProcessing = true);
+    try {
+      await FirebaseAuth.instance.signOut();
     } finally {
-      // finally runs whether it succeeded or failed
-      if (mounted) setState(() => _isChecking = false); // turn off the spinner
+      if (mounted) {
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (context) => LoginScreen()),
+              (route) => false,
+        );
+      }
     }
   }
 
-  // helper function: shows a small popup message at the bottom of the screen
   void _showMessage(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
   Widget build(BuildContext context) {
-    // build() draws this screen every time Flutter needs to refresh it
-    return Scaffold(
-      backgroundColor: Colors.white, // plain white background, matches app theme
-      body: SafeArea(
-        // SafeArea keeps content away from notches/status bar
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24.0), // side spacing
-          child: Column(
-            mainAxisAlignment:
-            MainAxisAlignment.center, // vertically centers everything on screen
-            children: [
-              // Big icon showing "waiting" status
-              Icon(
-                Icons.hourglass_top_rounded, // hourglass icon = waiting/pending
-                size: 90, // large icon size
-                color: _primaryGreen.shade800, // dark green color, matches theme
-              ),
-              const SizedBox(height: 24), // gap below icon
+    final bool isRejected = _status == 'rejected';
 
-              // Main heading text
-              Text(
-                'Registration Under Review',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 24, // large text for the heading
-                  fontWeight: FontWeight.bold, // bold heading
-                  color: _primaryGreen.shade800, // dark green, matches theme
+    return PopScope(
+      // While pending, there's nothing useful to go "back" to — block it
+      // entirely instead of letting Flutter reveal whatever sits underneath
+      // this screen in the navigation stack (e.g. a citizen dashboard).
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        if (isRejected) {
+          _signOutAndExit();
+        } else {
+          _showMessage('Please wait until your team is approved.');
+        }
+      },
+      child: Scaffold(
+        backgroundColor: Colors.white,
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  isRejected ? Icons.cancel_outlined : Icons.hourglass_top_rounded,
+                  size: 90,
+                  color: isRejected ? Colors.red.shade700 : _primaryGreen.shade800,
                 ),
-              ),
-              const SizedBox(height: 16), // gap below heading
-
-              // Explanation text for the user
-              const Text(
-                'Your rescue team registration has been submitted successfully. '
-                    'An admin will review your details and approve your team shortly. '
-                    'You will be able to log in once approved.',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 15, // normal readable text size
-                  color: Colors.black54, // grey text, less prominent than heading
-                  height: 1.5, // line spacing for readability
+                const SizedBox(height: 24),
+                Text(
+                  isRejected ? 'Registration Rejected' : 'Registration Under Review',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: isRejected ? Colors.red.shade700 : _primaryGreen.shade800,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 40), // gap before the button
-
-              // Button to manually check if status has changed
-              SizedBox(
-                width: double.infinity, // full width button
-                height: 56, // fixed height, same as other buttons in the app
-                child: ElevatedButton(
-                  onPressed: _isChecking
-                      ? null // disable button while already checking
-                      : _checkApprovalStatus, // otherwise run the check function
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _primaryGreen.shade800, // dark green fill
-                    foregroundColor: Colors.white, // white text/icon
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16), // rounded corners
+                const SizedBox(height: 16),
+                Text(
+                  isRejected
+                      ? 'Your rescue team registration was rejected. Please contact support for more details.'
+                      : 'Your rescue team registration has been submitted successfully. '
+                      'An admin will review your details and approve your team shortly. '
+                      'You will be taken to your dashboard automatically once approved — '
+                      'no need to log in again.',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    color: Colors.black54,
+                    height: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 40),
+                if (isRejected)
+                  SizedBox(
+                    width: double.infinity,
+                    height: 56,
+                    child: ElevatedButton(
+                      onPressed: _isProcessing ? null : _signOutAndExit,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red.shade700,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      ),
+                      child: _isProcessing
+                          ? const CircularProgressIndicator(color: Colors.white)
+                          : const Text('Back to Login', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
                     ),
-                  ),
-                  child: _isChecking
-                      ? const CircularProgressIndicator(
-                      color: Colors.white) // spinner while checking
-                      : const Text(
-                    'Check Status',
-                    style: TextStyle(
-                        fontSize: 18, fontWeight: FontWeight.w600),
-                  ),
-                ),
-              ),
-            ],
+                  )
+                else
+                  const CircularProgressIndicator(), // shows we're actively watching for approval
+              ],
+            ),
           ),
         ),
       ),

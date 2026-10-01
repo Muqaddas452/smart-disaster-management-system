@@ -19,7 +19,43 @@ class _AssignMembersScreenState extends State<AssignMembersScreen> {
   final Set<String> _selectedUids = {};
   bool _isDispatching = false;
 
+  // Active statuses that mean a member is currently out on a task and
+  // should show as "Busy" instead of "Available".
+  static const List<String> _activeTaskStatuses = ['assigned', 'enroute', 'in_progress'];
+
+  // CACHE: one Future per member uid, computed only once (not on every
+  // rebuild). This was the root cause of the frozen UI — before, a brand
+  // new Firestore query was fired on every single setState/rebuild
+  // (e.g. every checkbox tap), and that query (arrayContains + whereIn
+  // together) needs a Firestore composite index. Without that index it
+  // was silently throwing on every rebuild, flooding the app with
+  // background errors and making the screen feel unresponsive.
+  final Map<String, Future<bool>> _busyFutureCache = {};
+
+  Future<bool> _isMemberBusy(String uid) {
+    // Return the cached Future if we already started this check for this
+    // member — never fire a second query for the same uid.
+    return _busyFutureCache.putIfAbsent(uid, () async {
+      try {
+        final snap = await FirebaseFirestore.instance
+            .collection('tasks')
+            .where('assignedMemberIds', arrayContains: uid)
+            .where('status', whereIn: _activeTaskStatuses)
+            .limit(1)
+            .get();
+        return snap.docs.isNotEmpty;
+      } catch (e) {
+        // If this throws (e.g. missing composite index), don't let it
+        // repeat forever — log it once and just show "Available" as a
+        // safe fallback until the index/query is fixed.
+        debugPrint('AssignMembersScreen: _isMemberBusy failed for $uid -> $e');
+        return false;
+      }
+    });
+  }
+
   Future<void> _dispatch(List<QueryDocumentSnapshot<Map<String, dynamic>>> members) async {
+    debugPrint('AssignMembersScreen: Dispatch pressed, selected=$_selectedUids');
     if (_selectedUids.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Select at least one team member')),
@@ -48,12 +84,42 @@ class _AssignMembersScreenState extends State<AssignMembersScreen> {
       );
       Navigator.pop(context);
     } catch (e) {
+      debugPrint('AssignMembersScreen: dispatch failed -> $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not dispatch: $e')));
       }
     } finally {
       if (mounted) setState(() => _isDispatching = false);
     }
+  }
+
+  // Small colored pill: Offline (grey) takes priority in the display since a
+  // member who isn't online can't be dispatched right now anyway; otherwise
+  // Busy (orange) if they're already on an active task, else Available (green).
+  Widget _statusChip({required bool isOnline, required bool isBusy}) {
+    late final Color color;
+    late final Color bg;
+    late final String label;
+
+    if (!isOnline) {
+      color = Colors.black54;
+      bg = Colors.grey.shade200;
+      label = 'Offline';
+    } else if (isBusy) {
+      color = const Color(0xFF8A5300);
+      bg = const Color(0xFFFAEEDA);
+      label = 'Busy — on a task';
+    } else {
+      color = kGreen;
+      bg = const Color(0xFFE6F4EA);
+      label = 'Available';
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20)),
+      child: Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: color)),
+    );
   }
 
   @override
@@ -70,17 +136,37 @@ class _AssignMembersScreenState extends State<AssignMembersScreen> {
             style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
         centerTitle: true,
       ),
-      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      body: widget.teamId.trim().isEmpty
+          ? const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text(
+            'Could not determine your team. Please go back and try again.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.black54),
+          ),
+        ),
+      )
+          : StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: FirebaseFirestore.instance
             .collection('rescueTeamUsers')
             .where('teamId', isEqualTo: widget.teamId)
-            .where('isLeader', isEqualTo: false)
             .snapshots(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator(color: kGreen));
           }
-          final members = snapshot.data?.docs ?? [];
+
+          // Exclude Leaders locally so all members show up properly
+          final allDocs = snapshot.data?.docs ?? [];
+          final members = allDocs.where((doc) {
+            final data = doc.data();
+            final bool isLeader = data['isLeader'] == true ||
+                data['role'] == 'rescue_leader' ||
+                data['role'] == 'team_leader';
+            return !isLeader;
+          }).toList();
+
           if (members.isEmpty) {
             return const Center(child: Text('No team members found'));
           }
@@ -95,6 +181,9 @@ class _AssignMembersScreenState extends State<AssignMembersScreen> {
                     final m = members[i];
                     final name = m.data()['name'] ?? 'Member';
                     final specialization = m.data()['specialization'] ?? '';
+                    // Older member docs won't have this field yet, so default
+                    // to "online" rather than wrongly showing everyone offline.
+                    final bool isOnline = m.data()['isOnline'] ?? true;
                     final selected = _selectedUids.contains(m.id);
                     return Container(
                       margin: const EdgeInsets.only(bottom: 10),
@@ -107,6 +196,7 @@ class _AssignMembersScreenState extends State<AssignMembersScreen> {
                         activeColor: kGreen,
                         value: selected,
                         onChanged: (v) {
+                          debugPrint('AssignMembersScreen: checkbox tapped for ${m.id} -> $v');
                           setState(() {
                             if (v == true) {
                               _selectedUids.add(m.id);
@@ -116,9 +206,30 @@ class _AssignMembersScreenState extends State<AssignMembersScreen> {
                           });
                         },
                         title: Text(name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                        subtitle: specialization.toString().isNotEmpty
-                            ? Text(specialization, style: const TextStyle(fontSize: 12, color: Colors.black45))
-                            : null,
+                        subtitle: Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (specialization.toString().isNotEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 4),
+                                  child: Text(specialization,
+                                      style: const TextStyle(fontSize: 12, color: Colors.black45)),
+                                ),
+                              FutureBuilder<bool>(
+                                future: _isMemberBusy(m.id),
+                                builder: (context, statusSnap) {
+                                  // While the busy-check is loading, don't
+                                  // block on it — fall back to "available"
+                                  // look until we know for sure.
+                                  final bool isBusy = statusSnap.data ?? false;
+                                  return _statusChip(isOnline: isOnline, isBusy: isBusy);
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
                     );
                   },

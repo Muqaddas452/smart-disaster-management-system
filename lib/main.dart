@@ -37,18 +37,48 @@ void main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
-  // Register background message handler
+  // Register background message handler — this is just registering a
+  // callback, no network call, so it's safe to keep here.
   FirebaseMessaging.onBackgroundMessage(_firebaseBackgroundHandler);
 
-  // Request notification permissions for iOS and Android 13+
-  await FirebaseMessaging.instance.requestPermission(
-    alert: true,
-    badge: true,
-    sound: true,
-  );
+  // FIXED — runApp() now happens immediately after Firebase core init,
+  // instead of waiting on network-dependent FCM setup first.
+  //
+  // WHY: `FirebaseMessaging.instance.subscribeToTopic(...)` sends an actual
+  // network request to Firebase's servers. When there was no internet at
+  // all, `await`-ing it here blocked runApp() from ever being called —
+  // the app never rendered even its first frame, showing a permanently
+  // blank white screen with no spinner (Flutter hadn't drawn anything
+  // yet). Moving all FCM setup to run AFTER runApp(), without blocking
+  // startup on it, fixes that while keeping the exact same behavior once
+  // it succeeds.
+  runApp(const SmartDisasterApp());
 
-  // Subscribe user to target district notification topic
-  await FirebaseMessaging.instance.subscribeToTopic(kUserDistrictTopic);
+  // Fire-and-forget FCM setup — runs in the background after the UI is
+  // already showing. Wrapped in try/catch so a failure (e.g. no internet)
+  // is silently ignored instead of throwing an unhandled exception; the
+  // person can just use the app normally and FCM setup will succeed
+  // automatically next time there's a connection (permission +
+  // subscribeToTopic are safe to call again).
+  _setupFcm();
+}
+
+Future<void> _setupFcm() async {
+  try {
+    // Request notification permissions for iOS and Android 13+
+    await FirebaseMessaging.instance.requestPermission(
+      alert: true,
+      badge: true,
+      sound: true,
+    );
+
+    // Subscribe user to target district notification topic
+    await FirebaseMessaging.instance.subscribeToTopic(kUserDistrictTopic);
+  } catch (e) {
+    // Offline or FCM unavailable — safe to ignore, this just means push
+    // notifications won't be set up until the next time there's internet.
+    print('[FCM setup] skipped: $e');
+  }
 
   // Handle incoming messages while application is in foreground
   FirebaseMessaging.onMessage.listen((RemoteMessage message) {
@@ -59,8 +89,6 @@ void main() async {
   FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
     print('[FCM tapped] district=${message.data['district']} disaster=${message.data['disaster']}');
   });
-
-  runApp(const SmartDisasterApp());
 }
 
 class SmartDisasterApp extends StatelessWidget {

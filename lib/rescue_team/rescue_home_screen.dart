@@ -1,11 +1,15 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:smart_disaster_management_system/database/rescue_dao.dart'; // adjust path if needed
 
 // --- Screen Imports ---
 import 'view_task_screen.dart';
 import 'tasks_list_screen.dart';
+import 'member_status_list_screen.dart';
+import 'leader_status_overview_screen.dart';
 import 'team_leader/add_team_member.dart';
 import 'mapscreen.dart';
 import '../Services/map_service.dart';
@@ -15,6 +19,10 @@ import '../widgets/map/disaster_map.dart';
 import 'team_leader/view_leader_profile_screen.dart';
 import 'team_member/view_member_profile_screen.dart';
 
+// UI, navigation, and map are exactly the same as before. The only
+// addition: the alert banner and urgent tasks are shown instantly from
+// the SQLite cache (works offline too), then silently refreshed +
+// re-cached whenever the live Firestore stream has new data.
 class RescueTeamHomeScreen extends StatefulWidget {
   final bool isLeader;
   final String teamId;
@@ -38,6 +46,162 @@ class _RescueTeamHomeScreenState extends State<RescueTeamHomeScreen> {
   static const Color kRed = Color(0xFFD32F2F);
   static const Color kLightRed = Color(0xFFFFF0F0);
   static const Color kBg = Color(0xFFF5F5F5);
+
+  // ── Alert banner state (cache-first)
+  Map<String, dynamic>? _liveAlert; // null = no active alert
+  bool _alertLoadedOnce = false;
+  StreamSubscription? _alertSub;
+
+  // ── Urgent tasks state (cache-first)
+  List<Map<String, dynamic>> _urgentTasks = [];
+  bool _urgentLoadedOnce = false;
+  StreamSubscription? _urgentSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _initAlertSection();
+    _initUrgentTasksSection();
+  }
+
+  @override
+  void dispose() {
+    _alertSub?.cancel();
+    _urgentSub?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _initAlertSection() async {
+    // 1) Show cache immediately — this works even with zero internet.
+    final cached = await RescueDao.getCachedLiveAlert();
+    if (cached != null && mounted) {
+      setState(() {
+        _liveAlert = cached;
+        _alertLoadedOnce = true;
+      });
+    }
+
+    // 2) Live Firestore stream — same source as the original StreamBuilder
+    // (MapService.instance.getLatestActiveAlertDoc()), just now we cache
+    // the result and call setState ourselves.
+    _alertSub = MapService.instance.getLatestActiveAlertDoc().listen((snap) async {
+      if (snap.docs.isEmpty) {
+        await RescueDao.clearCachedLiveAlert();
+        if (mounted) {
+          setState(() {
+            _liveAlert = null;
+            _alertLoadedOnce = true;
+          });
+        }
+        return;
+      }
+
+      final doc = snap.docs.first;
+      final data = doc.data();
+      final title = (data['title'] ?? 'Alert').toString();
+      final message = (data['message'] ?? '').toString();
+      final riskLevel = (data['riskLevel'] ?? 'Medium').toString();
+      final lat = (data['latitude'] as num).toDouble();
+      final lng = (data['longitude'] as num).toDouble();
+      final createdAt = (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now();
+
+      await RescueDao.cacheLiveAlert(
+        title: title,
+        message: message,
+        riskLevel: riskLevel,
+        latitude: lat,
+        longitude: lng,
+        createdAt: createdAt.toIso8601String(),
+      );
+
+      if (mounted) {
+        setState(() {
+          _liveAlert = {
+            'docId': doc.id,
+            'title': title,
+            'message': message,
+            'riskLevel': riskLevel,
+            'latitude': lat,
+            'longitude': lng,
+            'createdAt': createdAt.toIso8601String(),
+            // keep the raw Firestore data + doc id around for the map,
+            // which needs the full document shape, not just our cached
+            // subset of fields.
+            '_rawData': data,
+            '_rawDocId': doc.id,
+          };
+          _alertLoadedOnce = true;
+        });
+      }
+    }, onError: (_) {
+      // Offline — the cached alert (if any) is already showing.
+      if (mounted) setState(() => _alertLoadedOnce = true);
+    });
+  }
+
+  void _initUrgentTasksSection() {
+    final String? uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) {
+      setState(() => _urgentLoadedOnce = true);
+      return;
+    }
+
+    // 1) Show cache immediately — reads from the SAME cached_tasks table
+    // that TasksListScreen already populates, filtered to high-priority,
+    // not-yet-resolved tasks.
+    RescueDao.getCachedUrgentTasks().then((cached) {
+      if (cached.isNotEmpty && mounted) {
+        setState(() {
+          _urgentTasks = cached;
+          _urgentLoadedOnce = true;
+        });
+      }
+    });
+
+    // 2) Live Firestore stream — same query as the original StreamBuilder,
+    // just now we upsert into cache (without wiping the full task list)
+    // and call setState ourselves.
+    final tasksRef = FirebaseFirestore.instance.collection('tasks');
+    final Query<Map<String, dynamic>> query = widget.isLeader
+        ? tasksRef.where('teamId', isEqualTo: widget.teamId).where('priority', isEqualTo: 'high')
+        : tasksRef.where('assignedMemberIds', arrayContains: uid).where('priority', isEqualTo: 'high');
+
+    _urgentSub = query.snapshots().listen((snap) async {
+      final tasks = snap.docs.map((d) {
+        final data = d.data();
+        final createdAt = data['createdAt'];
+        return {
+          'taskId': d.id,
+          'type': data['type'] ?? 'Task',
+          'priority': data['priority'] ?? 'high',
+          'address': data['address'] ?? 'Location unavailable',
+          'description': data['description'] ?? '',
+          'status': data['status'] ?? 'dispatched',
+          'teamId': data['teamId'] ?? '',
+          'assignedMemberIds': data['assignedMemberIds'] ?? [],
+          'assignedMembers': data['assignedMembers'] ?? [],
+          'latitude': (data['latitude'] as num?)?.toDouble(),
+          'longitude': (data['longitude'] as num?)?.toDouble(),
+          'createdAt': (createdAt is Timestamp) ? createdAt.toDate().toIso8601String() : '',
+          'statusOverriddenBy': data['statusOverriddenBy'],
+          'statusOverriddenAt': null,
+        };
+      }).toList();
+
+      await RescueDao.upsertTasks(tasks);
+      final activeUrgent = tasks.where((t) => (t['status'] ?? '') != 'resolved').toList();
+
+      if (mounted) {
+        setState(() {
+          _urgentTasks = activeUrgent;
+          _urgentLoadedOnce = true;
+        });
+      }
+    }, onError: (_) {
+      // Offline — the cached list is already showing, nothing to do here.
+      if (mounted) setState(() => _urgentLoadedOnce = true);
+    });
+  }
 
   // Dynamic Navigation Items
   List<Map<String, dynamic>> _getNavItems() {
@@ -97,7 +261,7 @@ class _RescueTeamHomeScreenState extends State<RescueTeamHomeScreen> {
                 const SizedBox(height: 12),
                 _alertAndRiskMapSection(),
                 const SizedBox(height: 14),
-                _urgentTasks(),
+                _urgentTasksSection(),
                 const SizedBox(height: 14),
                 _actionButtons(),
                 const SizedBox(height: 20),
@@ -153,83 +317,86 @@ class _RescueTeamHomeScreenState extends State<RescueTeamHomeScreen> {
     );
   }
 
-  // ── 2. LIVE ALERT & RISK MAP
+  // ── 2. LIVE ALERT & RISK MAP (cache-first)
   Widget _alertAndRiskMapSection() {
-    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: MapService.instance.getLatestActiveAlertDoc(),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) {
-          return const Padding(
-            padding: EdgeInsets.symmetric(vertical: 24),
-            child: Center(child: CircularProgressIndicator(color: kGreen)),
-          );
-        }
+    if (!_alertLoadedOnce) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 24),
+        child: Center(child: CircularProgressIndicator(color: kGreen)),
+      );
+    }
 
-        if (snapshot.data!.docs.isEmpty) {
-          return Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: const Text(
-              'No active alerts right now.',
-              style: TextStyle(color: Colors.black54, fontSize: 12),
-            ),
-          );
-        }
+    if (_liveAlert == null) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: const Text(
+          'No active alerts right now.',
+          style: TextStyle(color: Colors.black54, fontSize: 12),
+        ),
+      );
+    }
 
-        final doc = snapshot.data!.docs.first;
-        final data = doc.data();
+    final data = _liveAlert!;
+    final String title = data['title'] ?? 'Alert';
+    final String message = data['message'] ?? '';
+    final String riskLevel = data['riskLevel'] ?? 'Medium';
+    final double lat = data['latitude'];
+    final double lng = data['longitude'];
+    final createdAtStr = data['createdAt']?.toString();
+    final DateTime createdAt =
+    (createdAtStr != null && createdAtStr.isNotEmpty)
+        ? (DateTime.tryParse(createdAtStr) ?? DateTime.now())
+        : DateTime.now();
 
-        final String title = (data['title'] ?? 'Alert').toString();
-        final String message = (data['message'] ?? '').toString();
-        final String riskLevel = (data['riskLevel'] ?? 'Medium').toString();
-        final double lat = (data['latitude'] as num).toDouble();
-        final double lng = (data['longitude'] as num).toDouble();
-        final DateTime createdAt =
-            (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now();
+    // The map needs the full raw Firestore document shape — only available
+    // when this data came from the live stream (not from a cold cache-only
+    // load before any internet has ever connected).
+    final rawData = data['_rawData'] as Map<String, dynamic>?;
+    final rawDocId = data['_rawDocId'] as String?;
 
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _alertCard(
-              title: title,
-              message: message,
-              riskLevel: riskLevel,
-              createdAt: createdAt,
-              onTap: () {
-                final navItems = _getNavItems();
-                final mapIndex = navItems.indexWhere((item) => item['label'] == 'Map');
-                if (mapIndex != -1) {
-                  setState(() => _selectedIndex = mapIndex);
-                }
-              },
-            ),
-            const SizedBox(height: 14),
-            SizedBox(
-              height: 200,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(10),
-                child: DisasterMap(
-                  isAdmin: true,
-                  isRescueView: true,
-                  zonesStream: Stream.value(
-                    [MapService.instance.alertDataToPolygon(data, doc.id)],
-                  ),
-                  initialCameraPosition: CameraPosition(
-                    target: LatLng(lat, lng),
-                    zoom: 11,
-                  ),
-                  autoFollowLocation: false,
-                  showControls: false,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _alertCard(
+          title: title,
+          message: message,
+          riskLevel: riskLevel,
+          createdAt: createdAt,
+          onTap: () {
+            final navItems = _getNavItems();
+            final mapIndex = navItems.indexWhere((item) => item['label'] == 'Map');
+            if (mapIndex != -1) {
+              setState(() => _selectedIndex = mapIndex);
+            }
+          },
+        ),
+        const SizedBox(height: 14),
+        if (rawData != null && rawDocId != null)
+          SizedBox(
+            height: 200,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: DisasterMap(
+                isAdmin: true,
+                isRescueView: true,
+                zonesStream: Stream.value(
+                  [MapService.instance.alertDataToPolygon(rawData, rawDocId)],
                 ),
+                initialCameraPosition: CameraPosition(
+                  target: LatLng(lat, lng),
+                  zoom: 11,
+                ),
+                autoFollowLocation: false,
+                showControls: false,
               ),
             ),
-          ],
-        );
-      },
+          ),
+      ],
     );
   }
 
@@ -309,90 +476,69 @@ class _RescueTeamHomeScreenState extends State<RescueTeamHomeScreen> {
     );
   }
 
-  // ── 3. URGENT TASKS
-  Widget _urgentTasks() {
+  // ── 3. URGENT TASKS (cache-first)
+  Widget _urgentTasksSection() {
     final String? uid = FirebaseAuth.instance.currentUser?.uid;
-
     if (uid == null) {
       return const SizedBox.shrink();
     }
 
-    final tasksRef = FirebaseFirestore.instance.collection('tasks');
-    final Query<Map<String, dynamic>> query = widget.isLeader
-        ? tasksRef
-        .where('teamId', isEqualTo: widget.teamId)
-        .where('priority', isEqualTo: 'high')
-        : tasksRef
-        .where('assignedMemberIds', arrayContains: uid)
-        .where('priority', isEqualTo: 'high');
+    if (!_urgentLoadedOnce) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 16),
+        child: Center(child: CircularProgressIndicator(color: kGreen)),
+      );
+    }
 
-    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: query.snapshots(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Padding(
-            padding: EdgeInsets.symmetric(vertical: 16),
-            child: Center(child: CircularProgressIndicator(color: kGreen)),
-          );
-        }
-
-        final docs = snapshot.data?.docs ?? [];
-        final activeUrgentDocs = docs
-            .where((d) => (d.data()['status'] ?? '') != 'resolved')
-            .toList();
-
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  'Urgent Rescue Tasks',
-                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.black87),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                  decoration: BoxDecoration(color: Colors.grey[200], borderRadius: BorderRadius.circular(20)),
-                  child: Text(
-                    '${activeUrgentDocs.length} ACTIVE',
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 10, color: Colors.black54),
-                  ),
-                ),
-              ],
+            const Text(
+              'Urgent Rescue Tasks',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.black87),
             ),
-            const SizedBox(height: 8),
-            if (activeUrgentDocs.isEmpty)
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Text(
-                  'No urgent tasks assigned currently.',
-                  style: TextStyle(color: Colors.black45, fontSize: 12),
-                  textAlign: TextAlign.center,
-                ),
-              )
-            else
-              ListView.builder(
-                itemCount: activeUrgentDocs.length,
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemBuilder: (context, index) {
-                  final doc = activeUrgentDocs[index];
-                  final data = doc.data();
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: _taskCard(doc.id, data),
-                  );
-                },
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+              decoration: BoxDecoration(color: Colors.grey[200], borderRadius: BorderRadius.circular(20)),
+              child: Text(
+                '${_urgentTasks.length} ACTIVE',
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 10, color: Colors.black54),
               ),
+            ),
           ],
-        );
-      },
+        ),
+        const SizedBox(height: 8),
+        if (_urgentTasks.isEmpty)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Text(
+              'No urgent tasks assigned currently.',
+              style: TextStyle(color: Colors.black45, fontSize: 12),
+              textAlign: TextAlign.center,
+            ),
+          )
+        else
+          ListView.builder(
+            itemCount: _urgentTasks.length,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemBuilder: (context, index) {
+              final data = _urgentTasks[index];
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: _taskCard(data['taskId'] as String, data),
+              );
+            },
+          ),
+      ],
     );
   }
 
@@ -401,9 +547,10 @@ class _RescueTeamHomeScreenState extends State<RescueTeamHomeScreen> {
     final String address = data['address'] ?? 'Location unavailable';
 
     String timeAgo = '-';
-    final createdAt = data['createdAt'];
-    if (createdAt is Timestamp) {
-      timeAgo = _timeAgo(createdAt.toDate());
+    final createdAtStr = data['createdAt']?.toString();
+    if (createdAtStr != null && createdAtStr.isNotEmpty) {
+      final createdAt = DateTime.tryParse(createdAtStr);
+      if (createdAt != null) timeAgo = _timeAgo(createdAt);
     }
 
     final IconData icon = type.toLowerCase().contains('earthquake')
@@ -465,7 +612,19 @@ class _RescueTeamHomeScreenState extends State<RescueTeamHomeScreen> {
           child: _horizontalActionBtn(
             Icons.update,
             'Update Rescue Status',
-                () {},
+                () {
+              // Member -> filtered "my tasks" list (existing ViewTaskScreen
+              // buttons do the actual status update, unchanged).
+              // Leader -> whole-team status overview + emergency override.
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => widget.isLeader
+                      ? LeaderStatusOverviewScreen(teamId: widget.teamId)
+                      : const MemberStatusListScreen(),
+                ),
+              );
+            },
           ),
         ),
       ],
@@ -504,7 +663,7 @@ class _RescueTeamHomeScreenState extends State<RescueTeamHomeScreen> {
     );
   }
 
-  // ── 5. BOTTOM NAVIGATION BAR
+  // ── 5. FIXED BOTTOM NAVIGATION BAR
   Widget _bottomNav(BuildContext context) {
     final items = _getNavItems();
 
@@ -522,9 +681,8 @@ class _RescueTeamHomeScreenState extends State<RescueTeamHomeScreen> {
       child: SafeArea(
         top: false,
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 6),
+          padding: const EdgeInsets.symmetric(vertical: 4),
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: List.generate(items.length, (i) {
               final sel = _selectedIndex == i;
 
@@ -533,10 +691,11 @@ class _RescueTeamHomeScreenState extends State<RescueTeamHomeScreen> {
                   onTap: () {
                     setState(() => _selectedIndex = i);
                   },
-                  child: Padding(
+                  child: Container(
                     padding: const EdgeInsets.symmetric(vertical: 4),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
+                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Icon(
                           items[i]['icon'] as IconData,
@@ -546,6 +705,9 @@ class _RescueTeamHomeScreenState extends State<RescueTeamHomeScreen> {
                         const SizedBox(height: 3),
                         Text(
                           items[i]['label'] as String,
+                          textAlign: TextAlign.center,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             fontSize: 10,
                             color: sel ? kGreen : Colors.grey,

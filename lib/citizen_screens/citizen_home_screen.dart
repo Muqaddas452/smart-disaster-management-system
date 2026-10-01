@@ -1,15 +1,17 @@
-import 'package:flutter/material.dart';
+import 'dart:async';  //async:for handling asynchronous operations and stream subscriptions
+import 'package:flutter/material.dart';   //provide flutter widgets like scafold,container etc
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:geolocator/geolocator.dart';
-
+import 'package:firebase_auth/firebase_auth.dart';  //for identify current logged-in user
+import 'package:firebase_messaging/firebase_messaging.dart';  //for generate and store fcm token
+import 'package:geolocator/geolocator.dart';  //for obtaining user's phone current location
+// import screens
 import 'package:smart_disaster_management_system/citizen_screens/safety_tips_screen.dart';
+import 'package:smart_disaster_management_system/database/citizen_dao.dart';
 import '../../citizen_screens/report_screen.dart';
 import 'alert_screen.dart';
 import 'map_screen.dart';
 import 'view_citizen_profile_screen.dart';
-
+// a centralized class for color mangement,so that color remains reusable and maintainable
 class AppColors {
   static const Color primary = Color(0xFF1B5E20);
   static const Color primaryLight = Color(0xFF2E7D32);
@@ -120,7 +122,7 @@ class _HomeScreenState extends State<HomeScreen> {
         }, SetOptions(merge: true)); // merge: true so we don't overwrite name/address/phone etc.
       }
     } catch (e) {
-      // ignore
+      // ignore — offline or permission denied, location just stays null
     }
   }
 
@@ -131,14 +133,6 @@ class _HomeScreenState extends State<HomeScreen> {
     _NavItem(icon: Icons.notifications_outlined, label: 'Alerts'),
     _NavItem(icon: Icons.person_outline, label: 'Profile'),
   ];
-
-  String _timeAgo(DateTime time) {
-    final diff = DateTime.now().difference(time);
-    if (diff.inSeconds < 60) return 'Just now';
-    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
-    if (diff.inHours < 24) return '${diff.inHours}h ago';
-    return '${diff.inDays}d ago';
-  }
 
   void _onNavTap(int index) {
     setState(() => _selectedIndex = index);
@@ -210,95 +204,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                   const SizedBox(height: 10),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: StreamBuilder<QuerySnapshot>(
-                      stream: FirebaseFirestore.instance
-                          .collection('manual_reports')
-                          .where('reportedBy',
-                          isEqualTo:
-                          FirebaseAuth.instance.currentUser?.uid)
-                          .orderBy('timestamp', descending: true)
-                          .limit(3)
-                          .snapshots(),
-                      builder: (context, snapshot) {
-                        if (snapshot.connectionState ==
-                            ConnectionState.waiting) {
-                          return const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 12),
-                            child: Center(
-                                child: CircularProgressIndicator(
-                                    strokeWidth: 2)),
-                          );
-                        }
-
-                        if (snapshot.hasError) {
-                          return Container(
-                            padding: const EdgeInsets.all(14),
-                            decoration: BoxDecoration(
-                              color: AppColors.white,
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Text(
-                              'Reports error: ${snapshot.error}',
-                              style: const TextStyle(
-                                  fontSize: 11, color: Colors.red),
-                            ),
-                          );
-                        }
-
-                        final docs = snapshot.data?.docs ?? [];
-
-                        if (docs.isEmpty) {
-                          return Container(
-                            padding: const EdgeInsets.all(14),
-                            decoration: BoxDecoration(
-                              color: AppColors.white,
-                              borderRadius: BorderRadius.circular(10),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.04),
-                                  blurRadius: 6,
-                                  offset: const Offset(0, 1),
-                                ),
-                              ],
-                            ),
-                            child: const Text(
-                              'No reports submitted yet.',
-                              style: TextStyle(
-                                  fontSize: 12, color: AppColors.textGrey),
-                            ),
-                          );
-                        }
-
-                        return Column(
-                          children: docs.map((doc) {
-                            final data = doc.data() as Map<String, dynamic>;
-
-                            final String description =
-                                data['description'] ?? 'Emergency Report';
-                            final String status = data['status'] ?? 'Pending';
-                            final bool isVerified =
-                            status.toLowerCase().contains('verified');
-
-                            final Timestamp? ts = data['timestamp'];
-                            final String timeAgo =
-                            ts != null ? _timeAgo(ts.toDate()) : '';
-
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 10),
-                              child: _ReportCard(
-                                title: description.length > 40
-                                    ? '${description.substring(0, 40)}...'
-                                    : description,
-                                subtitle: '$status${timeAgo.isNotEmpty ? ' • $timeAgo' : ''}',
-                                isVerified: isVerified,
-                              ),
-                            );
-                          }).toList(),
-                        );
-                      },
-                    ),
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 16),
+                    child: _ReportsStatusSection(),
                   ),
                   const SizedBox(height: 20),
                   const Padding(
@@ -308,160 +216,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   const SizedBox(height: 10),
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: StreamBuilder<QuerySnapshot>(
-                      stream: FirebaseFirestore.instance
-                          .collection('shelters')
-                          .snapshots(),
-                      builder: (context, snapshot) {
-                        if (snapshot.connectionState ==
-                            ConnectionState.waiting) {
-                          return const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 12),
-                            child: Center(
-                                child: CircularProgressIndicator(
-                                    strokeWidth: 2)),
-                          );
-                        }
-
-                        if (snapshot.hasError) {
-                          return Container(
-                            padding: const EdgeInsets.all(14),
-                            decoration: BoxDecoration(
-                              color: AppColors.white,
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: const Text(
-                              'Unable to load help centers right now.',
-                              style: TextStyle(
-                                  fontSize: 12, color: AppColors.textGrey),
-                            ),
-                          );
-                        }
-
-                        final docs = snapshot.data?.docs ?? [];
-
-                        if (docs.isEmpty) {
-                          return Container(
-                            padding: const EdgeInsets.all(14),
-                            decoration: BoxDecoration(
-                              color: AppColors.white,
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: const Text(
-                              'No help centers available.',
-                              style: TextStyle(
-                                  fontSize: 12, color: AppColors.textGrey),
-                            ),
-                          );
-                        }
-
-                        final List<Map<String, dynamic>> sheltersList =
-                        docs.map((doc) {
-                          final data = doc.data() as Map<String, dynamic>;
-                          final double lat = (data['lat'] ?? 0).toDouble();
-                          final double lng = (data['lng'] ?? 0).toDouble();
-
-                          double? distanceKm;
-                          if (_userLat != null && _userLng != null) {
-                            final meters = Geolocator.distanceBetween(
-                                _userLat!, _userLng!, lat, lng);
-                            distanceKm = meters / 1000;
-                          }
-
-                          return {
-                            'name': data['name'] ?? 'Help Center',
-                            'type': data['type'] ?? 'shelter',
-                            'location': data['location'] ?? '',
-                            'capacity': (data['capacity'] ?? 0) as int,
-                            'occupied': (data['occupied'] ?? 0) as int,
-                            'lat': lat,
-                            'lng': lng,
-                            'distanceKm': distanceKm,
-                          };
-                        }).toList();
-
-                        if (_userLat != null && _userLng != null) {
-                          sheltersList.sort((a, b) {
-                            final da = a['distanceKm'] as double?;
-                            final db = b['distanceKm'] as double?;
-                            if (da == null || db == null) return 0;
-                            return da.compareTo(db);
-                          });
-                        }
-
-                        final nearest = sheltersList.take(2).toList();
-
-                        if (nearest.isEmpty) {
-                          return Container(
-                            padding: const EdgeInsets.all(14),
-                            decoration: BoxDecoration(
-                              color: AppColors.white,
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: const Text(
-                              'No help centers found nearby.',
-                              style: TextStyle(
-                                  fontSize: 12, color: AppColors.textGrey),
-                            ),
-                          );
-                        }
-
-                        return Column(
-                          children: nearest.map((shelter) {
-                            final String type = shelter['type'];
-                            final double? distanceKm = shelter['distanceKm'];
-
-                            IconData icon;
-                            Color color;
-                            if (type == 'hospital') {
-                              icon = Icons.local_hospital_outlined;
-                              color = AppColors.primary;
-                            } else if (type == 'rescue_station' ||
-                                type == 'rescue') {
-                              icon = Icons.emergency_outlined;
-                              color = AppColors.callRed;
-                            } else {
-                              icon = Icons.holiday_village_outlined;
-                              color = AppColors.primary;
-                            }
-
-                            final String distanceText = distanceKm != null
-                                ? '${distanceKm.toStringAsFixed(1)} km away'
-                                : (shelter['location'] ?? '');
-
-                            final int capacity = shelter['capacity'] ?? 0;
-                            final int occupied = shelter['occupied'] ?? 0;
-                            final int available =
-                            (capacity - occupied).clamp(0, capacity);
-                            final String subtitle = available > 0
-                                ? '$distanceText • $available/$capacity spots available'
-                                : '$distanceText • Full';
-
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 12),
-                              child: _HelpCenterCard(
-                                icon: icon,
-                                iconColor: color,
-                                title: shelter['name'],
-                                subtitle: subtitle,
-                                buttonLabel: 'Get Directions',
-                                buttonIcon: Icons.navigation_outlined,
-                                buttonColor: color,
-                                buttonBg: AppColors.divider,
-                                onButtonTap: () {
-                                  ScaffoldMessenger.of(context)
-                                      .showSnackBar(
-                                    SnackBar(
-                                      content: Text(
-                                          'Location: ${shelter['lat']}, ${shelter['lng']}'),
-                                    ),
-                                  );
-                                },
-                              ),
-                            );
-                          }).toList(),
-                        );
-                      },
+                    child: _HelpCentersSection(
+                      userLat: _userLat,
+                      userLng: _userLng,
                     ),
                   ),
                   const SizedBox(height: 16),
@@ -513,8 +270,30 @@ class _AppTopBar extends StatelessWidget {
   }
 }
 
-class _LiveAlertBanner extends StatelessWidget {
+// ── LIVE ALERT BANNER ────────────────────────────────────────────────────
+// Cache-first pattern: on open, immediately show whatever alert was last
+// matched from the local SQLite cache (works with zero internet). Then it
+// silently listens for live Firestore updates, re-caches, and refreshes
+// the banner the moment fresh data arrives.
+class _LiveAlertBanner extends StatefulWidget {
   const _LiveAlertBanner();
+
+  @override
+  State<_LiveAlertBanner> createState() => _LiveAlertBannerState();
+}
+
+class _LiveAlertBannerState extends State<_LiveAlertBanner> {
+  Map<String, dynamic>? _matchedAlert;
+  String _address = '';
+
+  StreamSubscription? _citizenSub;
+  StreamSubscription? _alertsSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFromCacheThenListen();
+  }
 
   bool _hasMatchingKeyword(String targetArea, String citizenAddress) {
     List<String> tokenize(String input) {
@@ -543,63 +322,110 @@ class _LiveAlertBanner extends StatelessWidget {
     }
   }
 
+  Future<void> _loadFromCacheThenListen() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+
+    // 1) Show cached data immediately — this is what makes the banner
+    // appear even with zero internet, instead of a blank/loading screen.
+    final cachedProfile = await CitizenDao.getCachedProfile(uid);
+    final cachedAlerts = await CitizenDao.getCachedAlerts();
+    if (cachedProfile != null) {
+      _address = cachedProfile['address'] ?? '';
+      _recomputeMatch(cachedAlerts);
+    }
+
+    // 2) Listen for the citizen's live address (needed for area matching).
+    _citizenSub = FirebaseFirestore.instance
+        .collection('citizens')
+        .doc(uid)
+        .snapshots()
+        .listen((snap) async {
+      if (!snap.exists) return;
+      final data = snap.data() as Map<String, dynamic>?;
+      final address = (data?['address'] ?? '').toString();
+      if (address.isEmpty) return;
+
+      _address = address;
+      await CitizenDao.cacheProfile(
+        uid: uid,
+        name: (data?['name'] ?? '').toString(),
+        email: (data?['email'] ?? '').toString(),
+        phone: (data?['phone'] ?? '').toString(),
+        address: address,
+        emergencyContactName: (data?['emergencyContactName'] ?? '').toString(),
+        emergencyContactPhone: (data?['emergencyContactPhone'] ?? '').toString(),
+        emergencyContactRelation:
+        (data?['emergencyContactRelation'] ?? '').toString(),
+      );
+
+      final freshAlerts = await CitizenDao.getCachedAlerts();
+      _recomputeMatch(freshAlerts);
+    });
+
+    // 3) Listen for live broadcast alerts, cache them, and recompute.
+    _alertsSub = FirebaseFirestore.instance
+        .collection('broadcast_alerts')
+        .where('status', isEqualTo: 'Sent')
+        .orderBy('createdAt', descending: true)
+        .limit(15)
+        .snapshots()
+        .listen((snap) async {
+      final alerts = snap.docs.map((d) {
+        final data = d.data();
+        final createdAt = data['createdAt'];
+        return {
+          'docId': d.id,
+          'disasterType': data['disasterType'] ?? 'Alert',
+          'priority': data['priority'] ?? 'Medium',
+          'targetArea': data['targetArea'] ?? '',
+          'message': data['message'] ?? '',
+          'createdAt': (createdAt is Timestamp)
+              ? createdAt.toDate().toIso8601String()
+              : DateTime.now().toIso8601String(),
+        };
+      }).toList();
+
+      await CitizenDao.cacheAlerts(alerts);
+      _recomputeMatch(alerts);
+    }, onError: (_) {
+      // Offline / permission error — keep showing whatever is cached.
+    });
+  }
+
+  void _recomputeMatch(List<Map<String, dynamic>> alerts) {
+    if (_address.isEmpty) return;
+
+    Map<String, dynamic>? found;
+    for (final alert in alerts) {
+      final targetArea = (alert['targetArea'] ?? '').toString();
+      if (targetArea.isNotEmpty && _hasMatchingKeyword(targetArea, _address)) {
+        found = alert;
+        break;
+      }
+    }
+    if (mounted) setState(() => _matchedAlert = found);
+  }
+
+  @override
+  void dispose() {
+    _citizenSub?.cancel();
+    _alertsSub?.cancel();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final uid = FirebaseAuth.instance.currentUser?.uid;
-    if (uid == null) return const SizedBox.shrink();
+    if (_matchedAlert == null) return const SizedBox.shrink();
 
-    return StreamBuilder<DocumentSnapshot>(
-      stream:
-      FirebaseFirestore.instance.collection('citizens').doc(uid).snapshots(),
-      builder: (context, citizenSnapshot) {
-        if (!citizenSnapshot.hasData || !citizenSnapshot.data!.exists) {
-          return const SizedBox.shrink();
-        }
+    final disasterType = (_matchedAlert!['disasterType'] ?? 'Alert').toString();
+    final message = (_matchedAlert!['message'] ?? '').toString();
+    final priority = (_matchedAlert!['priority'] ?? 'Medium').toString();
 
-        final citizenData =
-        citizenSnapshot.data!.data() as Map<String, dynamic>?;
-        final String address = citizenData?['address'] ?? '';
-
-        if (address.isEmpty) return const SizedBox.shrink();
-
-        return StreamBuilder<QuerySnapshot>(
-          stream: FirebaseFirestore.instance
-              .collection('broadcast_alerts')
-              .where('status', isEqualTo: 'Sent')
-              .orderBy('createdAt', descending: true)
-              .limit(15)
-              .snapshots(),
-          builder: (context, alertSnapshot) {
-            if (!alertSnapshot.hasData || alertSnapshot.data!.docs.isEmpty) {
-              return const SizedBox.shrink();
-            }
-
-            Map<String, dynamic>? matchedAlert;
-            for (final doc in alertSnapshot.data!.docs) {
-              final data = doc.data() as Map<String, dynamic>;
-              final String targetArea = data['targetArea'] ?? '';
-              if (targetArea.isNotEmpty &&
-                  _hasMatchingKeyword(targetArea, address)) {
-                matchedAlert = data;
-                break;
-              }
-            }
-
-            if (matchedAlert == null) return const SizedBox.shrink();
-
-            final String disasterType =
-                matchedAlert['disasterType'] ?? 'Alert';
-            final String message = matchedAlert['message'] ?? '';
-            final String priority = matchedAlert['priority'] ?? 'Medium';
-
-            return _AlertBanner(
-              title: 'ALERT: $disasterType in Your Area',
-              subtitle: message,
-              color: _priorityColor(priority),
-            );
-          },
-        );
-      },
+    return _AlertBanner(
+      title: 'ALERT: $disasterType in Your Area',
+      subtitle: message,
+      color: _priorityColor(priority),
     );
   }
 }
@@ -656,6 +482,335 @@ class _AlertBanner extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+// ── MY REPORTS STATUS ────────────────────────────────────────────────────
+// Same cache-first pattern: cached reports show instantly, live Firestore
+// data refreshes + re-caches silently in the background.
+class _ReportsStatusSection extends StatefulWidget {
+  const _ReportsStatusSection();
+
+  @override
+  State<_ReportsStatusSection> createState() => _ReportsStatusSectionState();
+}
+
+class _ReportsStatusSectionState extends State<_ReportsStatusSection> {
+  List<Map<String, dynamic>> _reports = [];
+  bool _loadedOnce = false;
+  StreamSubscription? _sub;
+
+  @override
+  void initState() {
+    super.initState();
+    _init();
+  }
+
+  String _timeAgo(DateTime time) {
+    final diff = DateTime.now().difference(time);
+    if (diff.inSeconds < 60) return 'Just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    return '${diff.inDays}d ago';
+  }
+
+  Future<void> _init() async {
+    // 1) Cached reports first — instant, works offline.
+    final cached = await CitizenDao.getCachedReportsStatus();
+    if (cached.isNotEmpty && mounted) {
+      setState(() {
+        _reports = cached;
+        _loadedOnce = true;
+      });
+    }
+
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) {
+      if (mounted) setState(() => _loadedOnce = true);
+      return;
+    }
+
+    // 2) Live stream — updates + re-caches whenever online.
+    _sub = FirebaseFirestore.instance
+        .collection('manual_reports')
+        .where('reportedBy', isEqualTo: uid)
+        .orderBy('timestamp', descending: true)
+        .limit(3)
+        .snapshots()
+        .listen((snap) async {
+      final reports = snap.docs.map((d) {
+        final data = d.data();
+        final ts = data['timestamp'];
+        return {
+          'reportId': d.id,
+          'description': data['description'] ?? 'Emergency Report',
+          'status': data['status'] ?? 'Pending',
+          'timestamp':
+          (ts is Timestamp) ? ts.toDate().toIso8601String() : '',
+          'reportedBy': uid,
+        };
+      }).toList();
+
+      await CitizenDao.cacheReportsStatus(reports);
+      if (mounted) {
+        setState(() {
+          _reports = reports;
+          _loadedOnce = true;
+        });
+      }
+    }, onError: (_) {
+      if (mounted) setState(() => _loadedOnce = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_loadedOnce) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 12),
+        child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+      );
+    }
+
+    if (_reports.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AppColors.white,
+          borderRadius: BorderRadius.circular(10),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 6,
+              offset: const Offset(0, 1),
+            ),
+          ],
+        ),
+        child: const Text(
+          'No reports submitted yet.',
+          style: TextStyle(fontSize: 12, color: AppColors.textGrey),
+        ),
+      );
+    }
+
+    return Column(
+      children: _reports.map((data) {
+        final description =
+        (data['description'] ?? 'Emergency Report').toString();
+        final status = (data['status'] ?? 'Pending').toString();
+        final isVerified = status.toLowerCase().contains('verified');
+
+        String timeAgo = '';
+        final tsStr = data['timestamp']?.toString();
+        if (tsStr != null && tsStr.isNotEmpty) {
+          final dt = DateTime.tryParse(tsStr);
+          if (dt != null) timeAgo = _timeAgo(dt);
+        }
+
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: _ReportCard(
+            title: description.length > 40
+                ? '${description.substring(0, 40)}...'
+                : description,
+            subtitle: '$status${timeAgo.isNotEmpty ? ' • $timeAgo' : ''}',
+            isVerified: isVerified,
+          ),
+        );
+      }).toList(),
+    );
+  }
+}
+
+// ── NEAREST HELP CENTERS ─────────────────────────────────────────────────
+class _HelpCentersSection extends StatefulWidget {
+  final double? userLat;
+  final double? userLng;
+
+  const _HelpCentersSection({this.userLat, this.userLng});
+
+  @override
+  State<_HelpCentersSection> createState() => _HelpCentersSectionState();
+}
+
+class _HelpCentersSectionState extends State<_HelpCentersSection> {
+  List<Map<String, dynamic>> _shelters = [];
+  bool _loadedOnce = false;
+  StreamSubscription? _sub;
+
+  @override
+  void initState() {
+    super.initState();
+    _init();
+  }
+
+  Future<void> _init() async {
+    // 1) Cached shelters first.
+    final cached = await CitizenDao.getCachedShelters();
+    if (cached.isNotEmpty && mounted) {
+      setState(() {
+        _shelters = cached;
+        _loadedOnce = true;
+      });
+    }
+
+    // 2) Live stream — updates + re-caches whenever online.
+    _sub = FirebaseFirestore.instance
+        .collection('shelters')
+        .snapshots()
+        .listen((snap) async {
+      final shelters = snap.docs.map((d) {
+        final data = d.data();
+        return {
+          'docId': d.id,
+          'name': data['name'] ?? 'Help Center',
+          'type': data['type'] ?? 'shelter',
+          'location': data['location'] ?? '',
+          'capacity': (data['capacity'] ?? 0) as int,
+          'occupied': (data['occupied'] ?? 0) as int,
+          'lat': (data['lat'] ?? 0).toDouble(),
+          'lng': (data['lng'] ?? 0).toDouble(),
+        };
+      }).toList();
+
+      await CitizenDao.cacheShelters(shelters);
+      if (mounted) {
+        setState(() {
+          _shelters = shelters;
+          _loadedOnce = true;
+        });
+      }
+    }, onError: (_) {
+      if (mounted) setState(() => _loadedOnce = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_loadedOnce) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 12),
+        child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+      );
+    }
+
+    if (_shelters.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AppColors.white,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: const Text(
+          'No help centers available.',
+          style: TextStyle(fontSize: 12, color: AppColors.textGrey),
+        ),
+      );
+    }
+
+    final List<Map<String, dynamic>> sheltersList = _shelters.map((shelter) {
+      double? distanceKm;
+      if (widget.userLat != null && widget.userLng != null) {
+        final meters = Geolocator.distanceBetween(
+          widget.userLat!,
+          widget.userLng!,
+          shelter['lat'],
+          shelter['lng'],
+        );
+        distanceKm = meters / 1000;
+      }
+      return {...shelter, 'distanceKm': distanceKm};
+    }).toList();
+
+    if (widget.userLat != null && widget.userLng != null) {
+      sheltersList.sort((a, b) {
+        final da = a['distanceKm'] as double?;
+        final db = b['distanceKm'] as double?;
+        if (da == null || db == null) return 0;
+        return da.compareTo(db);
+      });
+    }
+
+    final nearest = sheltersList.take(2).toList();
+
+    if (nearest.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AppColors.white,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: const Text(
+          'No help centers found nearby.',
+          style: TextStyle(fontSize: 12, color: AppColors.textGrey),
+        ),
+      );
+    }
+
+    return Column(
+      children: nearest.map((shelter) {
+        final String type = shelter['type'];
+        final double? distanceKm = shelter['distanceKm'];
+
+        IconData icon;
+        Color color;
+        if (type == 'hospital') {
+          icon = Icons.local_hospital_outlined;
+          color = AppColors.primary;
+        } else if (type == 'rescue_station' || type == 'rescue') {
+          icon = Icons.emergency_outlined;
+          color = AppColors.callRed;
+        } else {
+          icon = Icons.holiday_village_outlined;
+          color = AppColors.primary;
+        }
+
+        final String distanceText = distanceKm != null
+            ? '${distanceKm.toStringAsFixed(1)} km away'
+            : (shelter['location'] ?? '');
+
+        final int capacity = shelter['capacity'] ?? 0;
+        final int occupied = shelter['occupied'] ?? 0;
+        final int available = (capacity - occupied).clamp(0, capacity);
+        final String subtitle = available > 0
+            ? '$distanceText • $available/$capacity spots available'
+            : '$distanceText • Full';
+
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: _HelpCenterCard(
+            icon: icon,
+            iconColor: color,
+            title: shelter['name'],
+            subtitle: subtitle,
+            buttonLabel: 'Get Directions',
+            buttonIcon: Icons.navigation_outlined,
+            buttonColor: color,
+            buttonBg: AppColors.divider,
+            onButtonTap: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                      'Location: ${shelter['lat']}, ${shelter['lng']}'),
+                ),
+              );
+            },
+          ),
+        );
+      }).toList(),
     );
   }
 }
