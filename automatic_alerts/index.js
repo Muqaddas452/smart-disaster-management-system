@@ -754,6 +754,15 @@ exports.createAffectedZone = onDocumentWritten(
       let failed =
         0;
 
+      let rescueSent =
+        0;
+
+      let rescueSkipped =
+        0;
+
+      let rescueFailed =
+        0;
+
 
       // ====================================================
       // 15. DISTANCE FUNCTION
@@ -951,6 +960,217 @@ exports.createAffectedZone = onDocumentWritten(
       }
 
 
+      // ====================================================
+      // 17. SEND RESCUE TEAM ALERTS (NEARBY)
+      //
+      // Any rescue team located inside the same affected
+      // radius as the citizens above also gets an FCM alert,
+      // so nearby teams know a disaster just started in their
+      // area even before any task is formally assigned to
+      // them.
+      //
+      // Collection: rescueTeams
+      // Expected fields: latitude, longitude, leaderId
+      // (rescueTeams docs don't carry their own fcmToken -
+      // the leader's push token lives on users/{leaderId},
+      // same place PART 7 already reads it from). If a
+      // rescueTeams document is missing any of these fields,
+      // or its leader has no FCM token, it is simply skipped
+      // - this never throws and never touches the citizen
+      // notification flow above.
+      // ====================================================
+
+      let rescueTeamsSnapshot;
+
+      try {
+
+        rescueTeamsSnapshot =
+          await db
+            .collection("rescueTeams")
+            .get();
+
+      } catch (error) {
+
+        rescueTeamsSnapshot =
+          null;
+
+        console.error(
+          "Could not read rescueTeams collection:",
+          error
+        );
+      }
+
+      if (rescueTeamsSnapshot) {
+
+        for (
+          const rescueTeamDoc
+          of rescueTeamsSnapshot.docs
+        ) {
+
+          const rescueTeam =
+            rescueTeamDoc.data();
+
+          const rescueLeaderId =
+            String(
+              rescueTeam.leaderId ||
+              ""
+            ).trim();
+
+
+          if (
+            rescueTeam.latitude === undefined ||
+            rescueTeam.longitude === undefined ||
+            !rescueLeaderId
+          ) {
+
+            rescueSkipped++;
+
+            continue;
+          }
+
+
+          const rescueLatitude =
+            Number(
+              rescueTeam.latitude
+            );
+
+          const rescueLongitude =
+            Number(
+              rescueTeam.longitude
+            );
+
+
+          if (
+            !Number.isFinite(
+              rescueLatitude
+            ) ||
+            !Number.isFinite(
+              rescueLongitude
+            )
+          ) {
+
+            rescueSkipped++;
+
+            continue;
+          }
+
+
+          const rescueDistance =
+            distanceInMeters(
+              latitude,
+              longitude,
+              rescueLatitude,
+              rescueLongitude
+            );
+
+
+          console.log(
+            `Rescue team ${rescueTeamDoc.id}: ${Math.round(rescueDistance)} meters away`
+          );
+
+
+          if (
+            rescueDistance <= radiusMeters
+          ) {
+
+            try {
+
+              // ==============================================
+              // LOOK UP LEADER'S FCM TOKEN
+              // (users/{leaderId}.fcmToken - same lookup
+              // PART 7 / sendAndSaveNotification already use)
+              // ==============================================
+
+              const leaderDoc =
+                await db
+                  .collection("users")
+                  .doc(rescueLeaderId)
+                  .get();
+
+              if (!leaderDoc.exists) {
+
+                rescueSkipped++;
+
+                console.log(
+                  `Rescue team ${rescueTeamDoc.id}: leader ${rescueLeaderId} not found in users.`
+                );
+
+                continue;
+              }
+
+              const leaderFcmToken =
+                leaderDoc.data()?.fcmToken;
+
+              if (!leaderFcmToken) {
+
+                rescueSkipped++;
+
+                console.log(
+                  `Rescue team ${rescueTeamDoc.id}: leader ${rescueLeaderId} has no FCM token.`
+                );
+
+                continue;
+              }
+
+              await messaging.send({
+
+                notification: {
+
+                  title:
+                    `🚨 ${risk} ${disaster} Nearby`,
+
+                  body:
+                    `${risk} ${disaster} has been detected in ${district}, ` +
+                    `close to your team's location. Stay alert for task assignments.`,
+                },
+
+                data: {
+
+                  disaster:
+                    disaster,
+
+                  riskLevel:
+                    risk,
+
+                  city:
+                    district,
+
+                  alertId:
+                    event.params.alertId,
+
+                  type:
+                    "rescue_team_alert",
+                },
+
+                token:
+                  leaderFcmToken,
+              });
+
+
+              rescueSent++;
+
+              console.log(
+                `FCM sent to rescue team: ${rescueTeamDoc.id}`
+              );
+
+            } catch (error) {
+
+              rescueFailed++;
+
+              console.error(
+                `FCM failed for rescue team ${rescueTeamDoc.id}:`,
+                error.message
+              );
+            }
+
+          } else {
+
+            rescueSkipped++;
+          }
+        }
+      }
+
+
       console.log(
         "===================================="
       );
@@ -985,6 +1205,18 @@ exports.createAffectedZone = onDocumentWritten(
 
       console.log(
         `Notifications failed: ${failed}`
+      );
+
+      console.log(
+        `Rescue team alerts sent: ${rescueSent}`
+      );
+
+      console.log(
+        `Rescue teams skipped: ${rescueSkipped}`
+      );
+
+      console.log(
+        `Rescue team alerts failed: ${rescueFailed}`
       );
 
       console.log(

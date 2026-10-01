@@ -49,71 +49,58 @@ class AIPredictionPanel extends StatelessWidget {
                 if (predictions.isEmpty) {
                   return const Text("No AI predictions available.");
                 }
+                return SizedBox(
+                  height: 300,
+                  child: SingleChildScrollView(
+                    child: Column(
+                      children: predictions.take(5).map((zone) {
+                        IconData icon = Icons.warning;
 
-                return Column(
-                  children: predictions.take(5).map((zone) {
+                        switch (zone.disasterType.toLowerCase()) {
+                          case "flood":
+                            icon = Icons.flood;
+                            break;
+                          case "heatwave":
+                            icon = Icons.wb_sunny;
+                            break;
+                          case "earthquake":
+                            icon = Icons.public;
+                            break;
+                          case "storm":
+                            icon = Icons.air;
+                            break;
+                        }
 
-                    IconData icon = Icons.warning;
+                        String confidence;
 
-                    switch (zone.disasterType.toLowerCase()) {
-                      case "flood":
-                        icon = Icons.flood;
-                        break;
+                        switch (zone.riskLevel.toLowerCase()) {
+                          case "critical":
+                            confidence = "98%";
+                            break;
+                          case "high":
+                            confidence = "92%";
+                            break;
+                          case "medium":
+                            confidence = "75%";
+                            break;
+                          default:
+                            confidence = "55%";
+                        }
 
-                      case "heatwave":
-                        icon = Icons.wb_sunny;
-                        break;
-
-                      case "earthquake":
-                        icon = Icons.public;
-                        break;
-
-                      case "storm":
-                        icon = Icons.air;
-                        break;
-
-                      default:
-                        icon = Icons.warning;
-                    }
-
-                    String confidence;
-
-                    switch (zone.riskLevel.toLowerCase()) {
-                      case "critical":
-                        confidence = "98%";
-                        break;
-
-                      case "high":
-                        confidence = "92%";
-                        break;
-
-                      case "medium":
-                        confidence = "75%";
-                        break;
-
-                      default:
-                        confidence = "55%";
-                    }
-
-                    return Column(
-                      children: [
-
-                        ListTile(
-                          leading: Icon(icon),
-
-                          title: Text(zone.disasterType),
-
-                          subtitle: Text(zone.city),
-
-                          trailing: Text(confidence),
-                        ),
-
-                        const Divider(),
-
-                      ],
-                    );
-
-                  }).toList(),
+                        return Column(
+                          children: [
+                            ListTile(
+                              leading: Icon(icon),
+                              title: Text(zone.disasterType),
+                              subtitle: Text(zone.city),
+                              trailing: Text(confidence),
+                            ),
+                            const Divider(),
+                          ],
+                        );
+                      }).toList(),
+                    ),
+                  ),
                 );
               },
             ),

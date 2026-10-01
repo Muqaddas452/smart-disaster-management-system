@@ -1,3 +1,4 @@
+
 import 'package:flutter/material.dart';
 
 import '../../model/report_model.dart';
@@ -14,15 +15,11 @@ class ReportsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.grey.shade100,
-
       body: Padding(
         padding: const EdgeInsets.all(20),
-
         child: StreamBuilder<List<Report>>(
           stream: _reportService.getReports(),
-
           builder: (context, snapshot) {
-
             if (snapshot.connectionState ==
                 ConnectionState.waiting) {
               return const Center(
@@ -48,15 +45,12 @@ class ReportsScreen extends StatelessWidget {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-
                     Icon(
                       Icons.assignment,
                       size: 80,
                       color: Colors.grey,
                     ),
-
                     SizedBox(height: 20),
-
                     Text(
                       "No Reports Found",
                       style: TextStyle(
@@ -64,9 +58,7 @@ class ReportsScreen extends StatelessWidget {
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-
                     SizedBox(height: 10),
-
                     Text(
                       "User reports will appear here automatically.",
                     ),
@@ -75,43 +67,44 @@ class ReportsScreen extends StatelessWidget {
               );
             }
 
-            return Column(
-              crossAxisAlignment:
-              CrossAxisAlignment.start,
-
-              children: [
-
-                const Text(
-                  "User Reports",
-                  style: TextStyle(
-                    fontSize: 30,
-                    fontWeight: FontWeight.bold,
+            return SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    "User Reports",
+                    style: TextStyle(
+                      fontSize: 30,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
-                ),
 
-                const SizedBox(height: 8),
+                  const SizedBox(height: 8),
 
-                Text(
-                  "${reports.length} reports received from users",
-                  style: TextStyle(
-                    color: Colors.grey.shade700,
+                  Text(
+                    "${reports.length} reports received from users",
+                    style: TextStyle(
+                      color: Colors.grey.shade700,
+                    ),
                   ),
-                ),
 
-                const SizedBox(height: 25),
+                  const SizedBox(height: 25),
 
-                ReportStatistics(
-                  reports: reports,
-                ),
-
-                const SizedBox(height: 25),
-
-                Expanded(
-                  child: ReportTable(
+                  ReportStatistics(
                     reports: reports,
                   ),
-                ),
-              ],
+
+                  const SizedBox(height: 25),
+
+                  SizedBox(
+                    height: MediaQuery.of(context).size.height *
+                        0.65,
+                    child: ReportTable(
+                      reports: reports,
+                    ),
+                  ),
+                ],
+              ),
             );
           },
         ),

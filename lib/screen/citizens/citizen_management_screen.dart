@@ -21,7 +21,12 @@ class _CitizenManagementScreenState
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Registered Citizens"),
+        title: const Text(
+          "Registered Citizens",
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+          ),
+        ),
       ),
 
       body: StreamBuilder<List<Citizen>>(

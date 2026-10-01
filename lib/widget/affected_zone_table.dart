@@ -1,3 +1,4 @@
+
 import 'package:flutter/material.dart';
 
 import '../model/affected_zone_model.dart';
@@ -17,271 +18,233 @@ class AffectedZoneTable extends StatelessWidget {
   Widget build(BuildContext context) {
     final service = AffectedZoneService();
 
-    return SingleChildScrollView(
-      scrollDirection: Axis.vertical,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: DataTable(
-          columnSpacing: 25,
-
-          headingRowColor:
-          WidgetStateProperty.all(
-            Colors.grey.shade200,
-          ),
-
-          columns: const [
-            DataColumn(label: Text("Zone")),
-            DataColumn(label: Text("City")),
-            DataColumn(label: Text("Disaster")),
-            DataColumn(label: Text("Risk")),
-            DataColumn(label: Text("Population")),
-            DataColumn(label: Text("Status")),
-            DataColumn(label: Text("Action")),
-          ],
-
-          rows: affectedZones.map((zone) {
-            return DataRow(
-              cells: [
-
-                // ==========================
-                // ZONE
-                // ==========================
-                DataCell(
-                  Text(zone.zoneName),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return SingleChildScrollView(
+          scrollDirection: Axis.vertical,
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                minWidth: constraints.maxWidth,
+              ),
+              child: DataTable(
+                columnSpacing: 25,
+                headingRowColor:
+                WidgetStateProperty.all(
+                  Colors.grey.shade200,
                 ),
-
-                // ==========================
-                // CITY
-                // ==========================
-                DataCell(
-                  Text(zone.city),
-                ),
-
-                // ==========================
-                // DISASTER
-                // ==========================
-                DataCell(
-                  Text(zone.disasterType),
-                ),
-
-                // ==========================
-                // RISK
-                // ==========================
-                DataCell(
-                  Chip(
-                    backgroundColor:
-                    _riskColor(zone.riskLevel),
-                    label: Text(
-                      _displayRisk(zone.riskLevel),
-                      style: const TextStyle(
-                        color: Colors.white,
+                columns: const [
+                  DataColumn(label: Text("Zone")),
+                  DataColumn(label: Text("City")),
+                  DataColumn(label: Text("Disaster")),
+                  DataColumn(label: Text("Risk")),
+                  DataColumn(label: Text("Status")),
+                  DataColumn(label: Text("Action")),
+                ],
+                rows: affectedZones.map((zone) {
+                  return DataRow(
+                    cells: [
+                      // ZONE
+                      DataCell(
+                        Text(zone.zoneName),
                       ),
-                    ),
-                  ),
-                ),
 
-                // ==========================
-                // POPULATION
-                // ==========================
-                DataCell(
-                  Text(
-                    zone.population.toString(),
-                  ),
-                ),
-
-                // ==========================
-                // STATUS
-                // ==========================
-                DataCell(
-                  Chip(
-                    backgroundColor:
-                    _statusColor(zone.status),
-                    label: Text(
-                      zone.status,
-                      style: const TextStyle(
-                        color: Colors.white,
+                      // CITY
+                      DataCell(
+                        Text(zone.city),
                       ),
-                    ),
-                  ),
-                ),
 
-                // ==========================
-                // ACTIONS
-                // ==========================
-                DataCell(
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
+                      // DISASTER
+                      DataCell(
+                        Text(zone.disasterType),
+                      ),
 
-                      // ======================
-                      // VIEW
-                      // ======================
-                      IconButton(
-                        tooltip: "View",
-                        icon: const Icon(
-                          Icons.visibility,
-                          color: Colors.blue,
+                      // RISK
+                      DataCell(
+                        Chip(
+                          backgroundColor:
+                          _riskColor(zone.riskLevel),
+                          label: Text(
+                            _displayRisk(zone.riskLevel),
+                            style: const TextStyle(
+                              color: Colors.white,
+                            ),
+                          ),
                         ),
-                        onPressed: () {
-                          showDialog(
-                            context: context,
-                            builder: (_) =>
-                                AffectedZoneDialog(
-                                  zone: zone,
-                                ),
-                          );
-                        },
                       ),
 
-                      // ======================
-                      // EDIT
-                      // ======================
-                      IconButton(
-                        tooltip: "Edit",
-                        icon: const Icon(
-                          Icons.edit,
-                          color: Colors.orange,
+                      // STATUS
+                      DataCell(
+                        Chip(
+                          backgroundColor:
+                          _statusColor(zone.status),
+                          label: Text(
+                            zone.status,
+                            style: const TextStyle(
+                              color: Colors.white,
+                            ),
+                          ),
                         ),
-                        onPressed: () {
-                          showDialog(
-                            context: context,
-                            builder: (_) =>
-                                AffectedZoneFormDialog(
-                                  zone: zone,
-                                ),
-                          );
-                        },
                       ),
 
-                      // ======================
-                      // DELETE
-                      // ======================
-                      IconButton(
-                        tooltip: "Delete",
-                        icon: const Icon(
-                          Icons.delete,
-                          color: Colors.red,
-                        ),
-                        onPressed: () async {
+                      // ACTIONS
+                      DataCell(
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            // VIEW
+                            IconButton(
+                              tooltip: "View",
+                              icon: const Icon(
+                                Icons.visibility,
+                                color: Colors.blue,
+                              ),
+                              onPressed: () {
+                                showDialog(
+                                  context: context,
+                                  builder: (_) =>
+                                      AffectedZoneDialog(
+                                        zone: zone,
+                                      ),
+                                );
+                              },
+                            ),
 
-                          // Show confirmation
-                          final confirm =
-                          await showDialog<bool>(
-                            context: context,
-                            builder:
-                                (dialogContext) {
-                              return AlertDialog(
-                                title: const Text(
-                                  "Delete Zone",
-                                ),
+                            // EDIT
+                            IconButton(
+                              tooltip: "Edit",
+                              icon: const Icon(
+                                Icons.edit,
+                                color: Colors.orange,
+                              ),
+                              onPressed: () {
+                                showDialog(
+                                  context: context,
+                                  builder: (_) =>
+                                      AffectedZoneFormDialog(
+                                        zone: zone,
+                                      ),
+                                );
+                              },
+                            ),
 
-                                content: Text(
-                                  "Are you sure you want to "
-                                      "delete '${zone.zoneName}'?",
-                                ),
+                            // DELETE
+                            IconButton(
+                              tooltip: "Delete",
+                              icon: const Icon(
+                                Icons.delete,
+                                color: Colors.red,
+                              ),
+                              onPressed: () async {
+                                final confirm =
+                                await showDialog<bool>(
+                                  context: context,
+                                  builder: (dialogContext) {
+                                    return AlertDialog(
+                                      title: const Text(
+                                        "Delete Zone",
+                                      ),
+                                      content: Text(
+                                        "Are you sure you want to "
+                                            "delete '${zone.zoneName}'?",
+                                      ),
+                                      actions: [
+                                        TextButton(
+                                          onPressed: () {
+                                            Navigator.pop(
+                                              dialogContext,
+                                              false,
+                                            );
+                                          },
+                                          child: const Text(
+                                            "Cancel",
+                                          ),
+                                        ),
+                                        ElevatedButton(
+                                          style:
+                                          ElevatedButton
+                                              .styleFrom(
+                                            backgroundColor:
+                                            Colors.red,
+                                            foregroundColor:
+                                            Colors.white,
+                                          ),
+                                          onPressed: () {
+                                            Navigator.pop(
+                                              dialogContext,
+                                              true,
+                                            );
+                                          },
+                                          child: const Text(
+                                            "Delete",
+                                          ),
+                                        ),
+                                      ],
+                                    );
+                                  },
+                                );
 
-                                actions: [
+                                if (confirm != true) {
+                                  return;
+                                }
 
-                                  // CANCEL
-                                  TextButton(
-                                    onPressed: () {
-                                      Navigator.pop(
-                                        dialogContext,
-                                        false,
-                                      );
-                                    },
-                                    child: const Text(
-                                      "Cancel",
+                                try {
+                                  await service
+                                      .deleteAffectedZone(
+                                    zone.id,
+                                  );
+
+                                  if (!context.mounted) {
+                                    return;
+                                  }
+
+                                  ScaffoldMessenger.of(
+                                    context,
+                                  ).showSnackBar(
+                                    const SnackBar(
+                                      backgroundColor:
+                                      Colors.green,
+                                      content: Text(
+                                        "Affected zone deleted "
+                                            "successfully.",
+                                      ),
                                     ),
-                                  ),
+                                  );
+                                } catch (e) {
+                                  if (!context.mounted) {
+                                    return;
+                                  }
 
-                                  // DELETE
-                                  ElevatedButton(
-                                    style:
-                                    ElevatedButton
-                                        .styleFrom(
+                                  ScaffoldMessenger.of(
+                                    context,
+                                  ).showSnackBar(
+                                    SnackBar(
                                       backgroundColor:
                                       Colors.red,
-                                      foregroundColor:
-                                      Colors.white,
+                                      content: Text(
+                                        "Delete failed: $e",
+                                      ),
                                     ),
-                                    onPressed: () {
-                                      Navigator.pop(
-                                        dialogContext,
-                                        true,
-                                      );
-                                    },
-                                    child: const Text(
-                                      "Delete",
-                                    ),
-                                  ),
-                                ],
-                              );
-                            },
-                          );
-
-                          // User cancelled
-                          if (confirm != true) {
-                            return;
-                          }
-
-                          // ======================
-                          // DELETE FROM FIRESTORE
-                          // ======================
-                          try {
-                            await service
-                                .deleteAffectedZone(
-                              zone.id,
-                            );
-
-                            if (!context.mounted) {
-                              return;
-                            }
-
-                            ScaffoldMessenger.of(
-                              context,
-                            ).showSnackBar(
-                              const SnackBar(
-                                backgroundColor:
-                                Colors.green,
-                                content: Text(
-                                  "Affected zone deleted successfully.",
-                                ),
-                              ),
-                            );
-                          } catch (e) {
-                            if (!context.mounted) {
-                              return;
-                            }
-
-                            ScaffoldMessenger.of(
-                              context,
-                            ).showSnackBar(
-                              SnackBar(
-                                backgroundColor:
-                                Colors.red,
-                                content: Text(
-                                  "Delete failed: $e",
-                                ),
-                              ),
-                            );
-                          }
-                        },
+                                  );
+                                }
+                              },
+                            ),
+                          ],
+                        ),
                       ),
                     ],
-                  ),
-                ),
-              ],
-            );
-          }).toList(),
-        ),
-      ),
+                  );
+                }).toList(),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
-  // ==========================
   // RISK COLOR
-  // ==========================
   Color _riskColor(String risk) {
     switch (risk.trim().toLowerCase()) {
       case "high":
@@ -318,9 +281,7 @@ class AffectedZoneTable extends StatelessWidget {
     }
   }
 
-  // ==========================
   // STATUS COLOR
-  // ==========================
   Color _statusColor(String status) {
     switch (status) {
       case "Active":

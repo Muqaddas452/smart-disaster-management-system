@@ -50,61 +50,36 @@ class ActiveDisasterPanel extends StatelessWidget {
                   return const Text("No active disaster reports.");
                 }
 
-                return SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: DataTable(
-
-                    columns: const [
-
-                      DataColumn(
-                        label: Text("Disaster"),
-                      ),
-
-                      DataColumn(
-                        label: Text("Location"),
-                      ),
-
-                      DataColumn(
-                        label: Text("Severity"),
-                      ),
-
-                      DataColumn(
-                        label: Text("Status"),
-                      ),
-
-                    ],
-
-                    rows: reports.map((report) {
-
-                      return DataRow(
-
-                        cells: [
-
-                          DataCell(
-                            Text(report.emergencyType),
-                          ),
-
-                          DataCell(
-                            Text(
-                              "${report.latitude.toStringAsFixed(4)}, "
-                                  "${report.longitude.toStringAsFixed(4)}",
-                            ),
-                          ),
-
-                          DataCell(
-                            Text(report.severity),
-                          ),
-
-                          DataCell(
-                            Text(report.status),
-                          ),
-
+                return SizedBox(
+                  height: 350,
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.vertical,
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: DataTable(
+                        columns: const [
+                          DataColumn(label: Text("Disaster")),
+                          DataColumn(label: Text("Location")),
+                          DataColumn(label: Text("Severity")),
+                          DataColumn(label: Text("Status")),
                         ],
-
-                      );
-
-                    }).toList(),
-
+                        rows: reports.map((report) {
+                          return DataRow(
+                            cells: [
+                              DataCell(Text(report.emergencyType)),
+                              DataCell(
+                                Text(
+                                  "${report.latitude.toStringAsFixed(4)}, "
+                                      "${report.longitude.toStringAsFixed(4)}",
+                                ),
+                              ),
+                              DataCell(Text(report.severity)),
+                              DataCell(Text(report.status)),
+                            ],
+                          );
+                        }).toList(),
+                      ),
+                    ),
                   ),
                 );
               },

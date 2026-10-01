@@ -268,7 +268,7 @@ class _AlertsScreenState extends State<AlertsScreen> {
         }).toList();
 
         return Container(
-          color: const Color(0xffF4F7F6),
+          color: const Color(0xffF7F2FA),
           child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(
               20,
@@ -550,7 +550,7 @@ class _AlertsScreenState extends State<AlertsScreen> {
         decoration: BoxDecoration(
           color: isUnread
               ? const Color(0xffE9F0FA)
-              : const Color(0xffF4F7FA),
+              : const Color(0xffF7F2FA),
           borderRadius:
           BorderRadius.circular(10),
         ),

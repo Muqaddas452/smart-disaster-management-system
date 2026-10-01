@@ -5,6 +5,7 @@ class RescueTeamService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
   final String _collection = "rescueTeams";
+  final String _usersCollection = "rescueTeamUsers";
 
   //==========================================================
   // GET ALL TEAMS
@@ -64,12 +65,82 @@ class RescueTeamService {
   //==========================================================
   // APPROVE TEAM
   // Pending -> Available
+  //
+  // Flips the team-level status in rescueTeams, then cascades
+  // status: 'approved' into every rescueTeamUsers doc linked to
+  // this team (leader + any members) so the Login screen, the
+  // Pending Approval screen, and AuthWrapper all agree immediately.
+  //
+  // CHANGED: now wrapped so that if the cascade write is rejected by
+  // Firestore Security Rules (permission-denied), you get a clear,
+  // specific error instead of a silently-hanging Future — this is
+  // exactly the failure mode that was leaving the admin's "Approve"
+  // button stuck on its loading spinner with no feedback.
   //==========================================================
 
   Future<void> approveTeam(String id) async {
-    await _firestore.collection(_collection).doc(id).update({
-      "status": "Available",
-    });
+    final teamRef = _firestore.collection(_collection).doc(id);
+    await teamRef.update({"status": "Available"});
+
+    try {
+      await _cascadeUserStatus(teamId: id, status: 'approved');
+    } on FirebaseException catch (e) {
+      // Surface exactly what Firestore said — 'permission-denied' here
+      // means the Security Rules are blocking the write (rules not
+      // deployed yet, or the isAdmin() check isn't matching this admin
+      // account). Any other code points somewhere else entirely.
+      // ignore: avoid_print
+      print('approveTeam: cascade to rescueTeamUsers failed — '
+          'code=${e.code}, message=${e.message}');
+      rethrow; // let the calling screen's error handling react (e.g. stop the spinner, show a SnackBar)
+    }
+  }
+
+  //==========================================================
+  // REJECT TEAM
+  // Pending -> Rejected
+  // Same cascade idea as approveTeam(), for the reject path.
+  //==========================================================
+
+  Future<void> rejectTeam(String id) async {
+    final teamRef = _firestore.collection(_collection).doc(id);
+    await teamRef.update({"status": "Rejected"});
+
+    try {
+      await _cascadeUserStatus(teamId: id, status: 'rejected');
+    } on FirebaseException catch (e) {
+      // ignore: avoid_print
+      print('rejectTeam: cascade to rescueTeamUsers failed — '
+          'code=${e.code}, message=${e.message}');
+      rethrow;
+    }
+  }
+
+  // Shared helper: updates the status field on every rescueTeamUsers
+  // doc linked to this team (the leader, and any members who joined
+  // before the team was approved/rejected).
+  Future<void> _cascadeUserStatus({
+    required String teamId,
+    required String status,
+  }) async {
+    final linkedUsers = await _firestore
+        .collection(_usersCollection)
+        .where('teamId', isEqualTo: teamId)
+        .get();
+
+    if (linkedUsers.docs.isEmpty) {
+      // ignore: avoid_print
+      print('approveTeam/rejectTeam: no rescueTeamUsers doc found with '
+          'teamId == $teamId — nothing to cascade. Double-check the '
+          'teamId field actually matches this rescueTeams document id.');
+      return;
+    }
+
+    final batch = _firestore.batch();
+    for (final doc in linkedUsers.docs) {
+      batch.update(doc.reference, {'status': status});
+    }
+    await batch.commit();
   }
 
   //==========================================================

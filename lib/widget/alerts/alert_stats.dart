@@ -14,43 +14,59 @@ class AlertStats extends StatelessWidget {
   Widget build(BuildContext context) {
     final totalAlerts = alerts.length;
 
-    final sentAlerts =
-        alerts.where((e) => e.status.toLowerCase() == "sent").length;
+    final sentAlerts = alerts
+        .where((e) => e.status.toLowerCase() == "sent")
+        .length;
 
-    final pendingAlerts =
-        alerts.where((e) => e.status.toLowerCase() == "pending").length;
+    final pendingAlerts = alerts
+        .where((e) => e.status.toLowerCase() == "pending")
+        .length;
 
-    final criticalAlerts =
-        alerts.where((e) => e.priority.toLowerCase() == "critical").length;
+    final criticalAlerts = alerts
+        .where((e) => e.priority.toLowerCase() == "critical")
+        .length;
 
     return LayoutBuilder(
       builder: (context, constraints) {
+        const spacing = 20.0;
+
+        final columns = constraints.maxWidth >= 1000
+            ? 4
+            : constraints.maxWidth >= 550
+            ? 2
+            : 1;
+
+        final cardWidth = (constraints.maxWidth -
+            (spacing * (columns - 1))) /
+            columns;
+
         return Wrap(
-          spacing: 20,
-          runSpacing: 20,
+          spacing: spacing,
+          runSpacing: spacing,
           children: [
             _StatCard(
+              width: cardWidth,
               title: "Total Alerts",
               value: totalAlerts.toString(),
               icon: Icons.notifications_active,
               color: Colors.blue,
             ),
-
             _StatCard(
+              width: cardWidth,
               title: "Sent",
               value: sentAlerts.toString(),
               icon: Icons.check_circle,
               color: Colors.green,
             ),
-
             _StatCard(
+              width: cardWidth,
               title: "Pending",
               value: pendingAlerts.toString(),
               icon: Icons.schedule,
               color: Colors.orange,
             ),
-
             _StatCard(
+              width: cardWidth,
               title: "Critical",
               value: criticalAlerts.toString(),
               icon: Icons.warning,
@@ -64,12 +80,14 @@ class AlertStats extends StatelessWidget {
 }
 
 class _StatCard extends StatelessWidget {
+  final double width;
   final String title;
   final String value;
   final IconData icon;
   final Color color;
 
   const _StatCard({
+    required this.width,
     required this.title,
     required this.value,
     required this.icon,
@@ -79,17 +97,17 @@ class _StatCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 250,
+      width: width,
       height: 110,
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        color: const Color(0xffF7F2FA),
+        borderRadius: BorderRadius.circular(14),
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withOpacity(.12),
-            blurRadius: 12,
-            offset: const Offset(0, 5),
+            color: Colors.black.withOpacity(0.10),
+            blurRadius: 5,
+            offset: const Offset(0, 3),
           ),
         ],
       ),
@@ -99,7 +117,7 @@ class _StatCard extends StatelessWidget {
             width: 55,
             height: 55,
             decoration: BoxDecoration(
-              color: color.withOpacity(.12),
+              color: color.withOpacity(0.12),
               borderRadius: BorderRadius.circular(14),
             ),
             child: Icon(
@@ -108,9 +126,7 @@ class _StatCard extends StatelessWidget {
               size: 28,
             ),
           ),
-
           const SizedBox(width: 16),
-
           Expanded(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -124,9 +140,7 @@ class _StatCard extends StatelessWidget {
                     fontWeight: FontWeight.w500,
                   ),
                 ),
-
                 const SizedBox(height: 8),
-
                 Text(
                   value,
                   style: const TextStyle(

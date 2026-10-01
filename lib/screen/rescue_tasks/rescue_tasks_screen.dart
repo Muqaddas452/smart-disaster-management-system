@@ -2,6 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/constants/app_colors.dart';
+import '../../services/rescue_task_service.dart';
+import '../../widget/rescue_task_widgets.dart';
 
 class RescueTasksScreen extends StatefulWidget {
   const RescueTasksScreen({super.key});
@@ -11,7 +13,7 @@ class RescueTasksScreen extends StatefulWidget {
 }
 
 class _RescueTasksScreenState extends State<RescueTasksScreen> {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final RescueTaskService _taskService = RescueTaskService();
 
   final TextEditingController _searchController =
   TextEditingController();
@@ -29,23 +31,14 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
   // FIRESTORE STREAMS
   // ============================================================
 
-  Stream<QuerySnapshot<Map<String, dynamic>>> _tasksStream() {
-    return _firestore
-        .collection('tasks')
-        .orderBy('createdAt', descending: true)
-        .snapshots();
-  }
+  Stream<QuerySnapshot<Map<String, dynamic>>> _tasksStream() =>
+      _taskService.tasksStream();
 
-  Stream<QuerySnapshot<Map<String, dynamic>>> _reportsStream() {
-    return _firestore
-        .collection('manual_reports')
-        .orderBy('timestamp', descending: true)
-        .snapshots();
-  }
+  Stream<QuerySnapshot<Map<String, dynamic>>> _reportsStream() =>
+      _taskService.reportsStream();
 
-  Stream<QuerySnapshot<Map<String, dynamic>>> _teamsStream() {
-    return _firestore.collection('rescueTeams').snapshots();
-  }
+  Stream<QuerySnapshot<Map<String, dynamic>>> _teamsStream() =>
+      _taskService.teamsStream();
 
   // ============================================================
   // BUILD
@@ -556,7 +549,7 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
       ),
       child: Row(
         children: [
-          _emergencyIcon(emergency),
+          RescueTaskWidgets.emergencyIcon(emergency),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -578,7 +571,7 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
               ],
             ),
           ),
-          _severityBadge(severity),
+          RescueTaskWidgets.severityBadge(severity),
           const SizedBox(width: 12),
           ElevatedButton.icon(
             onPressed: () => _showAssignDialog(report, teams),
@@ -752,13 +745,13 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
                   color: Colors.grey.shade200,
                   child: const Row(
                     children: [
-                      _TableHeader('TASK', width: 125),
-                      _TableHeader('EMERGENCY', width: 150),
-                      _TableHeader('LOCATION', width: 170),
-                      _TableHeader('TEAM / LEADER', width: 210),
-                      _TableHeader('SEVERITY', width: 110),
-                      _TableHeader('STATUS', width: 150),
-                      _TableHeader('ACTION', width: 130),
+                      RescueTaskTableHeader('TASK', width: 125),
+                      RescueTaskTableHeader('EMERGENCY', width: 150),
+                      RescueTaskTableHeader('LOCATION', width: 170),
+                      RescueTaskTableHeader('TEAM / LEADER', width: 210),
+                      RescueTaskTableHeader('SEVERITY', width: 110),
+                      RescueTaskTableHeader('STATUS', width: 150),
+                      RescueTaskTableHeader('ACTION', width: 130),
                     ],
                   ),
                 ),
@@ -828,7 +821,7 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
               width: 150,
               child: Row(
                 children: [
-                  _emergencyIcon(emergency),
+                  RescueTaskWidgets.emergencyIcon(emergency),
                   const SizedBox(width: 7),
                   Expanded(
                     child: Text(
@@ -883,8 +876,8 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
                 ],
               ),
             ),
-            SizedBox(width: 110, child: _severityBadge(severity)),
-            SizedBox(width: 150, child: _statusBadge(status)),
+            SizedBox(width: 110, child: RescueTaskWidgets.severityBadge(severity)),
+            SizedBox(width: 150, child: RescueTaskWidgets.statusBadge(status)),
             SizedBox(
               width: 130,
               child: Row(
@@ -918,133 +911,15 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
   // ICONS / BADGES
   // ============================================================
 
-  Widget _emergencyIcon(String emergency) {
-    final value = emergency.toLowerCase();
 
-    IconData icon = Icons.warning_amber_rounded;
 
-    if (value.contains('flood')) {
-      icon = Icons.water_rounded;
-    } else if (value.contains('fire')) {
-      icon = Icons.local_fire_department_rounded;
-    } else if (value.contains('earthquake')) {
-      icon = Icons.public_rounded;
-    } else if (value.contains('storm')) {
-      icon = Icons.thunderstorm_rounded;
-    } else if (value.contains('rain')) {
-      icon = Icons.cloudy_snowing;
-    } else if (value.contains('accident')) {
-      icon = Icons.car_crash_rounded;
-    } else if (value.contains('heat')) {
-      icon = Icons.wb_sunny_rounded;
-    }
 
-    return Container(
-      width: 32,
-      height: 32,
-      decoration: BoxDecoration(
-        color: AppColors.primary.withOpacity(0.15),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Icon(icon, size: 17, color: AppColors.primary),
-    );
-  }
 
-  Color _severityColor(String severity) {
-    final value = severity.toLowerCase();
 
-    if (value == 'critical' || value == 'extreme') return Colors.red;
-    if (value == 'high') return Colors.orange;
-    if (value == 'medium') return Colors.blue;
-    if (value == 'low') return Colors.green;
-    return Colors.grey;
-  }
 
-  Widget _severityBadge(String severity) {
-    final color = _severityColor(severity);
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.15),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Text(
-        severity.toUpperCase(),
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: color),
-      ),
-    );
-  }
 
-  Widget _statusBadge(String status) {
-    final value = status.toLowerCase();
 
-    Color color = Colors.blue;
-    IconData icon = Icons.assignment_rounded;
-
-    if (value == 'dispatched') {
-      color = Colors.orange;
-      icon = Icons.send_rounded;
-    } else if (value == 'accepted') {
-      color = AppColors.primary;
-      icon = Icons.check_circle_outline;
-    } else if (value == 'assigned') {
-      color = Colors.blue;
-      icon = Icons.groups_rounded;
-    } else if (value == 'enroute') {
-      color = Colors.red;
-      icon = Icons.local_shipping_rounded;
-    } else if (value == 'in_progress') {
-      color = Colors.orange;
-      icon = Icons.engineering_rounded;
-    } else if (value == 'resolved') {
-      color = Colors.green;
-      icon = Icons.task_alt_rounded;
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.15),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 15, color: color),
-          const SizedBox(width: 5),
-          Flexible(
-            child: Text(
-              _statusLabel(status),
-              overflow: TextOverflow.ellipsis,
-              style:
-              TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: color),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  String _statusLabel(String status) {
-    switch (status.toLowerCase()) {
-      case 'dispatched':
-        return 'DISPATCHED';
-      case 'accepted':
-        return 'ACCEPTED';
-      case 'assigned':
-        return 'ASSIGNED';
-      case 'enroute':
-        return 'EN ROUTE';
-      case 'in_progress':
-        return 'IN PROGRESS';
-      case 'resolved':
-        return 'RESOLVED';
-      default:
-        return status.toUpperCase();
-    }
-  }
 
   // ============================================================
   // CREATE MANUAL TASK DIALOG
@@ -1480,93 +1355,26 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
     required String address,
   }) async {
     try {
-      final teamRef = _firestore.collection('rescueTeams').doc(teamId);
-      final teamSnapshot = await teamRef.get();
-
-      if (!teamSnapshot.exists) {
-        _showErrorSnackBar('Rescue Team ID "$teamId" was not found.');
-        return false;
-      }
-
-      final teamData = teamSnapshot.data() ?? {};
-      final teamStatus = (teamData['status'] ?? '').toString().toLowerCase();
-
-      if (teamStatus != 'available') {
-        _showErrorSnackBar(
-            'This rescue team is not available. Current status: ${teamData['status'] ?? 'Unknown'}.');
-        return false;
-      }
-
-      final teamName = (teamData['teamName'] ?? 'Rescue Team').toString();
-      final leaderId = (teamData['leaderId'] ?? teamId).toString();
-      final leaderName = (teamData['leaderName'] ?? 'Rescue Leader').toString();
-      final leaderPhone = (teamData['phoneNumber'] ?? '').toString();
-
-      final taskRef = _firestore.collection('tasks').doc();
-      final taskId = taskRef.id;
-      final now = FieldValue.serverTimestamp();
-
-      final taskData = <String, dynamic>{
-        'taskId': taskId,
-        'reportId': null,
-        'sourceType': 'admin_manual',
-        'sourceId': 'admin',
-        'citizenId': '',
-        'citizenName': '',
-        'phoneNumber': '',
-        'emergencyType': emergencyType,
-        'description': description,
-        'priority': priority,
-        'severity': priority,
-        'latitude': latitude,
-        'longitude': longitude,
-        'address': address,
-        'location': address,
-        'city': '',
-        'imageUrl': '',
-        'teamId': teamId,
-        'teamName': teamName,
-        'leaderId': leaderId,
-        'leaderName': leaderName,
-        'leaderPhone': leaderPhone,
-        'assignedMemberIds': <String>[],
-        'assignedMembers': <Map<String, dynamic>>[],
-        'status': 'dispatched',
-        'createdAt': now,
-        'assignedAt': now,
-        'acceptedAt': null,
-        'enrouteAt': null,
-        'startedAt': null,
-        'resolvedAt': null,
-        'lastUpdated': now,
-      };
-
-      await taskRef.set(taskData);
-
-      await teamRef.update({
-        'status': 'On Mission',
-        'assignedReportId': null,
-        'assignedTaskId': taskId,
-        'assignedArea': address,
-        'lastUpdated': now,
-      });
-
-      if (!mounted) {
-        return true;
-      }
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Manual rescue task created successfully.'),
-          behavior: SnackBarBehavior.floating,
-        ),
+      await _taskService.createManualTask(
+        teamId: teamId,
+        emergencyType: emergencyType,
+        description: description,
+        priority: priority,
+        latitude: latitude,
+        longitude: longitude,
+        address: address,
       );
-
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Manual rescue task created successfully.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
       return true;
     } catch (e) {
-      if (mounted) {
-        _showErrorSnackBar('Failed to create manual task: $e');
-      }
+      _showErrorSnackBar('Failed to create manual task: $e');
       return false;
     }
   }
@@ -1623,10 +1431,10 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _dialogInfo('Emergency', (data['emergencyType'] ?? 'Emergency').toString()),
-                    _dialogInfo('Citizen', (data['reporterName'] ?? 'Unknown Citizen').toString()),
-                    _dialogInfo('Location', (data['city'] ?? data['location'] ?? 'Unknown').toString()),
-                    _dialogInfo('Severity', (data['severity'] ?? 'Unknown').toString()),
+                    RescueTaskWidgets.dialogInfo('Emergency', (data['emergencyType'] ?? 'Emergency').toString()),
+                    RescueTaskWidgets.dialogInfo('Citizen', (data['reporterName'] ?? 'Unknown Citizen').toString()),
+                    RescueTaskWidgets.dialogInfo('Location', (data['city'] ?? data['location'] ?? 'Unknown').toString()),
+                    RescueTaskWidgets.dialogInfo('Severity', (data['severity'] ?? 'Unknown').toString()),
                     const SizedBox(height: 16),
                     const Text(
                       'Select Rescue Team',
@@ -1715,72 +1523,12 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
   // ============================================================
 
   Future<void> _assignTask(
-      QueryDocumentSnapshot<Map<String, dynamic>> report,
-      QueryDocumentSnapshot<Map<String, dynamic>> team,
-      ) async {
-    final reportData = report.data();
-    final teamData = team.data();
-
-    final taskRef = _firestore.collection('tasks').doc();
-    final taskId = taskRef.id;
-    final now = FieldValue.serverTimestamp();
-
-    final taskData = <String, dynamic>{
-      'taskId': taskId,
-      'reportId': report.id,
-      'sourceType': 'citizen_report',
-      'sourceId': report.id,
-      'citizenId': reportData['citizenId'] ?? '',
-      'citizenName': reportData['reporterName'] ?? 'Citizen',
-      'phoneNumber': reportData['phoneNumber'] ?? '',
-      'emergencyType': reportData['emergencyType'] ?? 'Emergency',
-      'description': reportData['description'] ?? '',
-      'severity': reportData['severity'] ?? 'Unknown',
-      'latitude': reportData['latitude'],
-      'longitude': reportData['longitude'],
-      'city': reportData['city'] ?? reportData['location'] ?? 'Unknown',
-      'location': reportData['location'] ?? '',
-      'imageUrl': reportData['imageUrl'] ?? '',
-      'teamId': team.id,
-      'teamName': teamData['teamName'] ?? 'Rescue Team',
-      'leaderId': teamData['leaderId'] ?? '',
-      'leaderName': teamData['leaderName'] ?? 'Rescue Leader',
-      'leaderPhone': teamData['phoneNumber'] ?? '',
-      'assignedMemberIds': <String>[],
-      'assignedMembers': <Map<String, dynamic>>[],
-      'status': 'dispatched',
-      'createdAt': now,
-      'assignedAt': now,
-      'acceptedAt': null,
-      'enrouteAt': null,
-      'startedAt': null,
-      'resolvedAt': null,
-      'lastUpdated': now,
-    };
-
+    QueryDocumentSnapshot<Map<String, dynamic>> report,
+    QueryDocumentSnapshot<Map<String, dynamic>> team,
+  ) async {
     try {
-      await taskRef.set(taskData);
-
-      await _firestore.collection('manual_reports').doc(report.id).update({
-        'taskId': taskId,
-        'assignedTeamId': team.id,
-        'assignedTeamName': teamData['teamName'] ?? 'Rescue Team',
-        'assignedLeaderId': teamData['leaderId'] ?? '',
-        'assignedLeaderName': teamData['leaderName'] ?? 'Rescue Leader',
-        'status': 'assigned',
-        'assignedAt': now,
-      });
-
-      await _firestore.collection('rescueTeams').doc(team.id).update({
-        'status': 'On Mission',
-        'assignedReportId': report.id,
-        'assignedTaskId': taskId,
-        'assignedArea': reportData['city'] ?? reportData['location'] ?? '',
-        'lastUpdated': now,
-      });
-
+      await _taskService.assignReportToTeam(report, team);
       if (!mounted) return;
-
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Rescue task assigned successfully.'),
@@ -1789,7 +1537,6 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
       );
     } catch (e) {
       if (!mounted) return;
-
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Failed to assign task: $e'),
@@ -1839,15 +1586,15 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _dialogInfo('Emergency',
+                      RescueTaskWidgets.dialogInfo('Emergency',
                           (data['emergencyType'] ?? data['type'] ?? 'Emergency').toString()),
-                      _dialogInfo('Description',
+                      RescueTaskWidgets.dialogInfo('Description',
                           (data['description'] ?? 'No description provided').toString()),
-                      _dialogInfo('Priority',
+                      RescueTaskWidgets.dialogInfo('Priority',
                           (data['priority'] ?? data['severity'] ?? 'Unknown').toString()),
-                      _dialogInfo('Latitude', (data['latitude'] ?? '-').toString()),
-                      _dialogInfo('Longitude', (data['longitude'] ?? '-').toString()),
-                      _dialogInfo('Address',
+                      RescueTaskWidgets.dialogInfo('Latitude', (data['latitude'] ?? '-').toString()),
+                      RescueTaskWidgets.dialogInfo('Longitude', (data['longitude'] ?? '-').toString()),
+                      RescueTaskWidgets.dialogInfo('Address',
                           (data['address'] ?? data['location'] ?? data['city'] ?? '-').toString()),
                       const SizedBox(height: 16),
                       const Text(
@@ -1938,53 +1685,12 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
   // ============================================================
 
   Future<void> _assignTeamToTask(
-      QueryDocumentSnapshot<Map<String, dynamic>> task,
-      QueryDocumentSnapshot<Map<String, dynamic>> team,
-      ) async {
-    final taskData = task.data();
-    final teamData = team.data();
-
-    final now = FieldValue.serverTimestamp();
-
-    final teamName = (teamData['teamName'] ?? 'Rescue Team').toString();
-    final leaderId = (teamData['leaderId'] ?? '').toString();
-    final leaderName = (teamData['leaderName'] ?? 'Rescue Leader').toString();
-
+    QueryDocumentSnapshot<Map<String, dynamic>> task,
+    QueryDocumentSnapshot<Map<String, dynamic>> team,
+  ) async {
     try {
-      await _firestore.collection('tasks').doc(task.id).update({
-        'teamId': team.id,
-        'teamName': teamName,
-        'leaderId': leaderId,
-        'leaderName': leaderName,
-        'leaderPhone': teamData['phoneNumber'] ?? '',
-        'status': 'dispatched',
-        'assignedAt': now,
-        'lastUpdated': now,
-      });
-
-      await _firestore.collection('rescueTeams').doc(team.id).update({
-        'status': 'On Mission',
-        'assignedReportId': taskData['reportId'] ?? '',
-        'assignedTaskId': task.id,
-        'assignedArea': taskData['city'] ?? taskData['location'] ?? '',
-        'lastUpdated': now,
-      });
-
-      final reportId = (taskData['reportId'] ?? '').toString();
-
-      if (reportId.isNotEmpty) {
-        await _firestore.collection('manual_reports').doc(reportId).update({
-          'assignedTeamId': team.id,
-          'assignedTeamName': teamName,
-          'assignedLeaderId': leaderId,
-          'assignedLeaderName': leaderName,
-          'status': 'assigned',
-          'assignedAt': now,
-        }).catchError((_) {});
-      }
-
+      await _taskService.assignTeamToExistingTask(task, team);
       if (!mounted) return;
-
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Rescue team assigned successfully.'),
@@ -1993,7 +1699,6 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
       );
     } catch (e) {
       if (!mounted) return;
-
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Failed to assign team: $e'),
@@ -2053,7 +1758,7 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
                             ],
                           ),
                         ),
-                        _statusBadge((data['status'] ?? 'dispatched').toString()),
+                        RescueTaskWidgets.statusBadge((data['status'] ?? 'dispatched').toString()),
                       ],
                     ),
                     const SizedBox(height: 22),
@@ -2064,7 +1769,7 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
                       style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
                     ),
                     const SizedBox(height: 15),
-                    _buildTimeline((data['status'] ?? 'dispatched').toString()),
+                    RescueTaskWidgets.buildTimeline((data['status'] ?? 'dispatched').toString()),
                     const SizedBox(height: 20),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.end,
@@ -2090,22 +1795,22 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
       spacing: 14,
       runSpacing: 14,
       children: [
-        _detailBox('Emergency',
+        RescueTaskWidgets.detailBox('Emergency',
             data['emergencyType']?.toString() ?? data['type']?.toString() ?? 'Emergency',
             Icons.warning_amber_rounded),
-        _detailBox('Citizen',
+        RescueTaskWidgets.detailBox('Citizen',
             data['citizenName']?.toString() ?? data['reporterName']?.toString() ?? 'Citizen',
             Icons.person_rounded),
-        _detailBox('Location',
+        RescueTaskWidgets.detailBox('Location',
             data['city']?.toString() ?? data['location']?.toString() ?? data['address']?.toString() ?? 'Unknown',
             Icons.location_on_rounded),
-        _detailBox('Rescue Team', data['teamName']?.toString() ?? 'Unassigned',
+        RescueTaskWidgets.detailBox('Rescue Team', data['teamName']?.toString() ?? 'Unassigned',
             Icons.local_shipping_rounded),
-        _detailBox('Leader', data['leaderName']?.toString() ?? 'Unassigned',
+        RescueTaskWidgets.detailBox('Leader', data['leaderName']?.toString() ?? 'Unassigned',
             Icons.person_pin_rounded),
-        _detailBox('Severity', data['severity']?.toString() ?? 'Unknown',
+        RescueTaskWidgets.detailBox('Severity', data['severity']?.toString() ?? 'Unknown',
             Icons.priority_high_rounded),
-        _detailBox('Source', _sourceLabel(data['sourceType']?.toString()),
+        RescueTaskWidgets.detailBox('Source', _sourceLabel(data['sourceType']?.toString()),
             Icons.source_rounded),
       ],
     );
@@ -2130,131 +1835,11 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
     }
   }
 
-  Widget _detailBox(String title, String value, IconData icon) {
-    return SizedBox(
-      width: 190,
-      child: Container(
-        padding: const EdgeInsets.all(13),
-        decoration: BoxDecoration(
-          color: Colors.grey.shade50,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: Colors.grey.shade200),
-        ),
-        child: Row(
-          children: [
-            Icon(icon, size: 18, color: AppColors.primary),
-            const SizedBox(width: 9),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title, style: const TextStyle(fontSize: 14, color: Colors.grey)),
-                  const SizedBox(height: 3),
-                  Text(
-                    value,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Colors.black87),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 
-  Widget _buildTimeline(String status) {
-    final current = status.toLowerCase();
 
-    final steps = [
-      'dispatched',
-      'accepted',
-      'assigned',
-      'enroute',
-      'in_progress',
-      'resolved',
-    ];
 
-    final labels = [
-      'Task Dispatched',
-      'Leader Accepted',
-      'Members Assigned',
-      'Team En Route',
-      'Rescue In Progress',
-      'Task Resolved',
-    ];
 
-    int currentIndex = steps.indexOf(current);
-    if (currentIndex < 0) currentIndex = 0;
 
-    return Column(
-      children: List.generate(steps.length, (index) {
-        final done = index <= currentIndex;
-
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Column(
-              children: [
-                Container(
-                  width: 28,
-                  height: 28,
-                  decoration: BoxDecoration(
-                    color: done ? Colors.green : Colors.grey.shade100,
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: done ? Colors.green : Colors.grey.shade300,
-                    ),
-                  ),
-                  child: Icon(
-                    done ? Icons.check : Icons.circle_outlined,
-                    size: 15,
-                    color: done ? Colors.white : Colors.grey,
-                  ),
-                ),
-                if (index < steps.length - 1)
-                  Container(
-                    width: 2,
-                    height: 28,
-                    color: index < currentIndex ? Colors.green : Colors.grey.shade300,
-                  ),
-              ],
-            ),
-            const SizedBox(width: 12),
-            Padding(
-              padding: const EdgeInsets.only(top: 5),
-              child: Text(
-                labels[index],
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: done ? FontWeight.w700 : FontWeight.w400,
-                  color: done ? Colors.black87 : Colors.grey,
-                ),
-              ),
-            ),
-          ],
-        );
-      }),
-    );
-  }
-
-  Widget _dialogInfo(String title, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 90,
-            child: Text(title, style: const TextStyle(fontSize: 13, color: Colors.grey)),
-          ),
-          Expanded(
-            child: Text(value, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
-          ),
-        ],
-      ),
-    );
-  }
 
   Widget _emptyTasks() {
     return Padding(
@@ -2319,25 +1904,3 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
 // TABLE HEADER
 // ============================================================
 
-class _TableHeader extends StatelessWidget {
-  final String title;
-  final double width;
-
-  const _TableHeader(this.title, {required this.width});
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: width,
-      child: Text(
-        title,
-        style: const TextStyle(
-          fontSize: 14,
-          fontWeight: FontWeight.w800,
-          color: Colors.black54,
-          letterSpacing: .4,
-        ),
-      ),
-    );
-  }
-}

@@ -1,16 +1,13 @@
 import 'package:flutter/material.dart';
 
 import '../model/shelter_model.dart';
-import '../model/resource_model.dart';
 
 class ShelterStatCards extends StatelessWidget {
   final List<ShelterModel> shelters;
-  final List<ResourceModel> resources;
 
   const ShelterStatCards({
     super.key,
     required this.shelters,
-    required this.resources,
   });
 
   Widget card(String title, String value, IconData icon) {
@@ -47,9 +44,6 @@ class ShelterStatCards extends StatelessWidget {
     final totalBeds =
     shelters.fold(0, (sum, e) => sum + e.capacity);
 
-    final totalResources =
-    resources.fold(0, (sum, e) => sum + e.quantity);
-
     return Row(
       children: [
         card(
@@ -72,14 +66,6 @@ class ShelterStatCards extends StatelessWidget {
           "Beds",
           totalBeds.toString(),
           Icons.bed,
-        ),
-
-        const SizedBox(width: 15),
-
-        card(
-          "Resources",
-          totalResources.toString(),
-          Icons.inventory,
         ),
       ],
     );

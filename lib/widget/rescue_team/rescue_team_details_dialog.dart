@@ -62,26 +62,50 @@ class _RescueTeamDetailsDialogState
     );
   }
 
-  Future approveTeam() async {
+  // CHANGED: wrapped in try/catch. Previously, any error thrown by
+  // _service.approveTeam() (e.g. a Firestore permission-denied while
+  // cascading status into rescueTeamUsers) had nothing to catch it —
+  // loading stayed true forever with no error shown, which is
+  // exactly the "Approve button just spins forever" symptom. Now the
+  // spinner always resolves one way or the other, and if something is
+  // still wrong you'll see the real Firestore error in a SnackBar
+  // instead of a silent hang.
+  Future<void> approveTeam() async {
     setState(() => loading = true);
 
-    await _service.approveTeam(widget.team.id);
-
-    if (mounted) Navigator.pop(context);
+    try {
+      await _service.approveTeam(widget.team.id);
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (mounted) {
+        setState(() => loading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Approve failed: $e')),
+        );
+      }
+    }
   }
 
-  Future completeMission() async {
+  Future<void> completeMission() async {
     setState(() => loading = true);
 
-    await _service.completeMission(
-      widget.team.id,
-      widget.team.assignedReportId,
-    );
-
-    if (mounted) Navigator.pop(context);
+    try {
+      await _service.completeMission(
+        widget.team.id,
+        widget.team.assignedReportId,
+      );
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (mounted) {
+        setState(() => loading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Complete mission failed: $e')),
+        );
+      }
+    }
   }
 
-  Future deleteTeam() async {
+  Future<void> deleteTeam() async {
 
     final delete = await showDialog<bool>(
 
@@ -125,9 +149,17 @@ class _RescueTeamDetailsDialogState
 
     setState(() => loading = true);
 
-    await _service.deleteRescueTeam(widget.team.id);
-
-    if (mounted) Navigator.pop(context);
+    try {
+      await _service.deleteRescueTeam(widget.team.id);
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (mounted) {
+        setState(() => loading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Delete failed: $e')),
+        );
+      }
+    }
   }
 
   @override
