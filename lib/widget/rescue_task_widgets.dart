@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../../core/constants/app_colors.dart';
 
 /// Small reusable visual components used by the Rescue Tasks screen.
 class RescueTaskWidgets {
@@ -54,13 +53,13 @@ class RescueTaskWidgets {
 
       decoration: BoxDecoration(
 
-        color: AppColors.primary.withOpacity(0.15),
+        color: Color(0xFF6750A4).withOpacity(0.15),
 
         borderRadius: BorderRadius.circular(8),
 
       ),
 
-      child: Icon(icon, size: 17, color: AppColors.primary),
+      child: Icon(icon, size: 17, color: Color(0xFF6750A4)),
 
     );
 
@@ -142,7 +141,7 @@ class RescueTaskWidgets {
 
     } else if (value == 'accepted') {
 
-      color = AppColors.primary;
+      color = Color(0xFF6750A4);
 
       icon = Icons.check_circle_outline;
 
@@ -318,7 +317,7 @@ class RescueTaskWidgets {
 
           children: [
 
-            Icon(icon, size: 18, color: AppColors.primary),
+            Icon(icon, size: 18, color: Color(0xFF6750A4)),
 
             const SizedBox(width: 9),
 

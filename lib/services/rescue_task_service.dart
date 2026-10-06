@@ -119,6 +119,7 @@ class RescueTaskService {
         'phoneNumber': '',
         'emergencyType': emergencyType,
         'description': description,
+        'type': emergencyType,
         'priority': priority,
         'severity': priority,
         'latitude': latitude,
@@ -201,21 +202,46 @@ class RescueTaskService {
       final leaderName =
       _stringValue(teamData['leaderName'], 'Rescue Leader');
 
+      // Citizen app report mein field naam alag hain (incident_type,
+      // severity_level, name, phone) — pehle yahan galat naam parhe jate the
+      // is liye priority hamesha 'Unknown' ho jati thi.
+      String firstText(List<String> keys, String fallback) {
+        for (final k in keys) {
+          final v = reportData[k];
+          if (v != null && v.toString().trim().isNotEmpty) {
+            return v.toString().trim();
+          }
+        }
+        return fallback;
+      }
+
+      final String reportPriority = firstText(
+          ['priority', 'severity', 'severity_level', 'severityLevel'],
+          'Medium');
+      final String reportType =
+          firstText(['emergencyType', 'incident_type'], 'Emergency');
+      final String reportAddress =
+          firstText(['location', 'address', 'city'], 'Unknown');
+
       final taskData = <String, dynamic>{
         'taskId': taskRef.id,
         'reportId': report.id,
         'sourceType': 'citizen_report',
         'sourceId': report.id,
-        'citizenId': reportData['citizenId'] ?? '',
-        'citizenName': reportData['reporterName'] ?? 'Citizen',
-        'phoneNumber': reportData['phoneNumber'] ?? '',
-        'emergencyType': reportData['emergencyType'] ?? 'Emergency',
+        'citizenId': firstText(['citizenId', 'reportedBy', 'userId'], ''),
+        'citizenName':
+            firstText(['reporterName', 'name'], 'Citizen'),
+        'phoneNumber': firstText(['phoneNumber', 'phone'], ''),
+        'emergencyType': reportType,
+        'type': reportType,
         'description': reportData['description'] ?? '',
-        'severity': reportData['severity'] ?? 'Unknown',
+        'priority': reportPriority,
+        'severity': reportPriority,
         'latitude': reportData['latitude'],
         'longitude': reportData['longitude'],
         'city': reportData['city'] ?? reportData['location'] ?? 'Unknown',
         'location': reportData['location'] ?? '',
+        'address': reportAddress,
         'imageUrl': reportData['imageUrl'] ?? '',
         'teamId': team.id,
         'teamName': teamName,

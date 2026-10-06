@@ -22,6 +22,7 @@ const { getMessaging } =
   require("firebase-admin/messaging");
 
 const crypto = require("crypto");
+const { findLeaderTokens } = require("./push_helpers");
 const nodemailer = require("nodemailer");
 
 
@@ -30,6 +31,12 @@ const nodemailer = require("nodemailer");
 // ==========================================================
 
 initializeApp();
+
+// true = automatic alert ka push ab app_notifications.js se SAB rescue
+// leaders + members ko jata hai (sirf nearby leader ko nahi). Isay true
+// rakhne par neeche wala purana "nearby leader" bhejna band rehta hai taake
+// leader ko do dafa notification na aaye.
+const SEND_AUTO_ALERT_TO_ALL_RESCUE_USERS = true;
 
 const db = getFirestore();
 const messaging = getMessaging();
@@ -1000,7 +1007,7 @@ exports.createAffectedZone = onDocumentWritten(
         );
       }
 
-      if (rescueTeamsSnapshot) {
+      if (rescueTeamsSnapshot && !SEND_AUTO_ALERT_TO_ALL_RESCUE_USERS) {
 
         for (
           const rescueTeamDoc
@@ -1843,35 +1850,32 @@ exports.onRescueTeamAssigned = onDocumentWritten(
     // by phone number in `users`), NOT `citizens`.
     // ======================================================
 
-    if (leaderId) {
+    // Citizen report se assign hone wale task mein leaderId KHALI hota hai
+    // (rescueTeams doc mein leaderId nahi, sirf leaderUid hota hai), is liye
+    // leaderId par depend nahi karte: team ke leader ko teamId se dhoondte hain.
+    await sendAndSaveNotification({
 
-      await sendAndSaveNotification({
+      teamId:
+        afterTeamId,
 
-        userId:
-          leaderId,
+      userId:
+        leaderId || afterTeamId,
 
-        collection:
-          "users",
+      collection:
+        "users",
 
-        taskId:
-          taskId,
+      taskId:
+        taskId,
 
-        recipientType:
-          "rescue_leader",
+      recipientType:
+        "rescue_leader",
 
-        title:
-          "🚑 New Rescue Task Assigned",
+      title:
+        "🚑 New Rescue Task Assigned",
 
-        message:
-          `A new ${emergencyType} report has been assigned to ${teamName}. Please check your rescue dashboard.`,
-      });
-
-    } else {
-
-      console.log(
-        "leaderId is empty on this task."
-      );
-    }
+      message:
+        `A new ${emergencyType} report has been assigned to ${teamName}. Please check your rescue dashboard.`,
+    });
 
     return null;
   }
@@ -2127,6 +2131,7 @@ exports.onRescueStatusChanged = onDocumentUpdated(
 // ==========================================================
 
 async function sendAndSaveNotification({
+  teamId,
   userId,
   collection,
   taskId,
@@ -2187,30 +2192,37 @@ async function sendAndSaveNotification({
       `Notification history saved: ${notificationRef.id}`
     );
 
-    // ======================================================
-    // RECIPIENT NOT FOUND
-    // ======================================================
-
-    if (!userDoc.exists) {
-
-      console.log(
-        `Recipient not found in ${collection}: ${userId}`
-      );
-
+    // Citizen ki push `sendUserNotification` (Notifications onCreate) bhejta
+    // hai - yahan dobara bhejne se notification do dafa aati thi.
+    if (collection === "citizens") {
       return;
     }
 
-    const recipient =
-      userDoc.data();
-
     // ======================================================
-    // GET FCM TOKEN
+    // COLLECT FCM TOKENS
+    //
+    // Rescue app (Android) leaders ka token `rescueTeamUsers`
+    // mein save karti hai, jabke admin panel leaderId `users`
+    // collection se leta hai. Is liye `users/{leaderId}` ke
+    // saath saath team ke leader ka `rescueTeamUsers` token bhi
+    // use hota hai - taake leader ko push zaroor pahunche.
     // ======================================================
 
-    const fcmToken =
-      recipient.fcmToken;
+    const tokens = [];
 
-    if (!fcmToken) {
+    if (userDoc.exists && userDoc.data()?.fcmToken) {
+      tokens.push(userDoc.data().fcmToken);
+    }
+
+    if (collection === "users" && teamId) {
+      tokens.push(
+        ...(await findLeaderTokens(teamId, [userId]))
+      );
+    }
+
+    const uniqueTokens = [...new Set(tokens)];
+
+    if (uniqueTokens.length === 0) {
 
       console.log(
         `No FCM token for ${collection}/${userId}. Notification history saved.`
@@ -2223,36 +2235,54 @@ async function sendAndSaveNotification({
     // SEND PUSH
     // ======================================================
 
-    await messaging.send({
+    for (const token of uniqueTokens) {
 
-      notification: {
+      try {
 
-        title:
-          title,
+        await messaging.send({
 
-        body:
-          message,
-      },
+          notification: {
 
-      data: {
+            title:
+              title,
 
-        notificationId:
-          notificationRef.id,
+            body:
+              message,
+          },
 
-        taskId:
-          taskId,
+          data: {
 
-        type:
-          "rescue_notification",
-      },
+            notificationId:
+              notificationRef.id,
 
-      token:
-        fcmToken,
-    });
+            taskId:
+              taskId,
 
-    console.log(
-      `Rescue FCM sent successfully to ${collection}/${userId}`
-    );
+            type:
+              "rescue_notification",
+          },
+
+          android: {
+            priority:
+              "high",
+          },
+
+          token:
+            token,
+        });
+
+        console.log(
+          `Rescue FCM sent successfully to ${collection}/${userId}`
+        );
+
+      } catch (error) {
+
+        console.error(
+          `Rescue FCM failed for ${collection}/${userId}:`,
+          error.message
+        );
+      }
+    }
 
   } catch (error) {
 
@@ -2262,3 +2292,11 @@ async function sendAndSaveNotification({
     );
   }
 }
+
+
+// ==========================================================
+// APP NOTIFICATIONS (members, leader status, alerts, reports)
+// Alag file: app_notifications.js
+// ==========================================================
+
+Object.assign(exports, require("./app_notifications"));

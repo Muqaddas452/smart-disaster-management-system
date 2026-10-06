@@ -1,7 +1,8 @@
+import 'dart:math' as math;
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
-import '../../core/constants/app_colors.dart';
 import '../../services/rescue_task_service.dart';
 import '../../widget/rescue_task_widgets.dart';
 
@@ -185,136 +186,37 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
       return !hasTask && !resolved;
     }).toList();
 
-    // Background now matches Rescue Teams (Colors.grey.shade100).
-    return Container(
-      color: Colors.grey.shade100,
-      child: Stack(
-        children: [
-          SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 100),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _buildHeader(),
-                const SizedBox(height: 20),
-                _buildStats(
-                  newCount,
-                  assignedCount,
-                  activeCount,
-                  completedCount,
-                ),
-                if (pendingReports.isNotEmpty)
-                  _buildPendingReports(pendingReports, teams),
-                if (pendingReports.isNotEmpty) const SizedBox(height: 20),
-                _buildTaskSection(filteredTasks, tasks.length, teams),
-              ],
-            ),
-          ),
-
-          // Manual "Create Task" button — same dialog/logic as before,
-          // just restyled to the app's primary brand color.
-          Positioned(
-            right: 24,
-            bottom: 24,
-            child: FloatingActionButton.extended(
-              onPressed: () => _showCreateManualTaskDialog(teams),
-              icon: const Icon(Icons.add_rounded, size: 21),
-              label: const Text(
-                'Create Task',
-                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
-              ),
-              backgroundColor: AppColors.primary,
-              foregroundColor: Colors.white,
-              elevation: 3,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-          ),
-        ],
+    // Layout bilkul Rescue Teams screen jaisa: Scaffold + AppBar + Card stats
+    // + "Add Team" jaisa extended button.
+    return Scaffold(
+      backgroundColor: Colors.grey.shade100,
+      appBar: AppBar(
+        title: const Text('Rescue Tasks'),
+        centerTitle: false,
       ),
-    );
-  }
-
-  // ============================================================
-  // HEADER
-  // ============================================================
-
-  Widget _buildHeader() {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          width: 46,
-          height: 46,
-          decoration: BoxDecoration(
-            color: AppColors.primary,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: const Icon(
-            Icons.assignment_turned_in_rounded,
-            color: Colors.white,
-            size: 24,
-          ),
+      floatingActionButton: FloatingActionButton.extended(
+        icon: const Icon(Icons.add),
+        label: const Text('Create Task'),
+        onPressed: () => _showCreateManualTaskDialog(teams),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 100),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildStats(
+              newCount,
+              assignedCount,
+              activeCount,
+              completedCount,
+            ),
+            if (pendingReports.isNotEmpty)
+              _buildPendingReports(pendingReports, teams),
+            if (pendingReports.isNotEmpty) const SizedBox(height: 20),
+            _buildTaskSection(filteredTasks, tasks.length, teams),
+          ],
         ),
-        const SizedBox(width: 14),
-        const Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Rescue Tasks',
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w800,
-                  color: Colors.black87,
-                ),
-              ),
-              SizedBox(height: 4),
-              Text(
-                'Assign and monitor emergency response operations',
-                style: TextStyle(fontSize: 13, color: Colors.grey),
-              ),
-            ],
-          ),
-        ),
-        StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-          stream: _tasksStream(),
-          builder: (context, snapshot) {
-            final count = snapshot.data?.docs.length ?? 0;
-
-            return Container(
-              padding:
-              const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(10),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.06),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.sync_rounded, size: 17, color: Colors.green),
-                  const SizedBox(width: 7),
-                  Text(
-                    '$count Tasks',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 14,
-                      color: Colors.black87,
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        ),
-      ],
+      ),
     );
   }
 
@@ -386,54 +288,49 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
       Color color,
       double width,
       ) {
+    // Rescue Teams ke stat cards jaisa hi (RescueStatistics._buildCard).
     return SizedBox(
       width: width,
-      child: Container(
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(
-          // Plain light-grey background — same as Rescue Teams
-          // stat cards. Only the icon circle carries the color.
-          color: Colors.grey.shade50,
+      child: Card(
+        elevation: 3,
+        shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(14),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.04),
-              blurRadius: 10,
-              offset: const Offset(0, 3),
-            ),
-          ],
         ),
-        child: Row(
-          children: [
-            Container(
-              width: 56,
-              height: 56,
-              decoration: BoxDecoration(
-                color: color.withOpacity(0.20),
-                shape: BoxShape.circle,
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 28,
+                backgroundColor: color.withOpacity(.15),
+                child: Icon(icon, color: color, size: 28),
               ),
-              child: Icon(icon, color: color, size: 28),
-            ),
-            const SizedBox(width: 16),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(fontSize: 15, color: Colors.grey),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        color: Colors.grey,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      value.toString(),
+                      style: TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.bold,
+                        color: color,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  value.toString(),
-                  style: TextStyle(
-                    fontSize: 28,
-                    fontWeight: FontWeight.bold,
-                    color: color,
-                  ),
-                ),
-              ],
-            ),
-          ],
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -526,18 +423,29 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
     );
   }
 
+  /// Report document se pehla khali na hone wala field (naam alag alag ho sakte hain).
+  String _reportField(Map<String, dynamic> d, List<String> keys, String fallback) {
+    for (final k in keys) {
+      final v = d[k];
+      if (v != null && v.toString().trim().isNotEmpty) return v.toString().trim();
+    }
+    return fallback;
+  }
+
   Widget _pendingReportTile(
       QueryDocumentSnapshot<Map<String, dynamic>> report,
       List<QueryDocumentSnapshot<Map<String, dynamic>>> teams,
       ) {
     final data = report.data();
 
-    final emergency = (data['emergencyType'] ?? 'Emergency').toString();
-    final severity = (data['severity'] ?? 'Unknown').toString();
-    final city =
-    (data['city'] ?? data['location'] ?? 'Location unavailable')
-        .toString();
-    final reporter = (data['reporterName'] ?? 'Citizen').toString();
+    // Citizen app ki report mein field naam: incident_type, severity_level, name.
+    final emergency =
+    _reportField(data, ['emergencyType', 'incident_type'], 'Emergency');
+    final severity = _reportField(
+        data, ['priority', 'severity', 'severity_level', 'severityLevel'], 'Unknown');
+    final city = _reportField(
+        data, ['city', 'location', 'address'], 'Location unavailable');
+    final reporter = _reportField(data, ['reporterName', 'name'], 'Citizen');
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -581,9 +489,6 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
               style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
             ),
             style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              foregroundColor: Colors.white,
-              elevation: 0,
               padding:
               const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
               shape: RoundedRectangleBorder(
@@ -791,7 +696,7 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
     final teamId = (data['teamId'] ?? '').toString();
     final team = (data['teamName'] ?? 'Unassigned').toString();
     final leader = (data['leaderName'] ?? 'Unassigned').toString();
-    final severity = (data['severity'] ?? 'Unknown').toString();
+    final severity = (data['priority'] ?? data['severity'] ?? 'Unknown').toString();
     final status = (data['status'] ?? 'dispatched').toString();
     final isUnassigned = teamId.isEmpty;
 
@@ -813,7 +718,7 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
                 style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w700,
-                  color: AppColors.primary,
+                  color: Color(0xFF6750A4),
                 ),
               ),
             ),
@@ -886,7 +791,7 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
                     tooltip: 'View task',
                     onPressed: () => _showTaskDetails(doc),
                     icon: Icon(Icons.visibility_outlined,
-                        size: 18, color: AppColors.primary),
+                        size: 18, color: Color(0xFF6750A4)),
                   ),
                   if (isUnassigned)
                     IconButton(
@@ -931,6 +836,7 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
       List<QueryDocumentSnapshot<Map<String, dynamic>>> teams,
       ) {
     String? selectedTeamId;
+    bool showAllTeams = false;
     final descriptionController = TextEditingController();
     final latitudeController = TextEditingController();
     final longitudeController = TextEditingController();
@@ -952,10 +858,22 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
 
         return StatefulBuilder(
           builder: (context, setDialogState) {
+            final areaLat = double.tryParse(latitudeController.text.trim());
+            final areaLng = double.tryParse(longitudeController.text.trim());
+            final areaText = addressController.text.trim();
+            final visibleTeams = showAllTeams
+                ? availableTeams
+                : _teamsForArea(availableTeams,
+                lat: areaLat, lng: areaLng, area: areaText);
+            if (selectedTeamId != null &&
+                !visibleTeams.any((t) => t.id == selectedTeamId)) {
+              selectedTeamId = null;
+            }
+
             return AlertDialog(
               title: Row(
                 children: [
-                  Icon(Icons.add_task_rounded, color: AppColors.primary),
+                  Icon(Icons.add_task_rounded, color: Color(0xFF6750A4)),
                   const SizedBox(width: 10),
                   const Text(
                     'Create Manual Rescue Task',
@@ -975,6 +893,15 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
                         style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
                       ),
                       const SizedBox(height: 7),
+                      _areaFilterBar(
+                        showAll: showAllTeams,
+                        shown: visibleTeams.length,
+                        total: availableTeams.length,
+                        area: areaText,
+                        onToggle: () => setDialogState(() {
+                          showAllTeams = !showAllTeams;
+                        }),
+                      ),
                       if (availableTeams.isEmpty)
                         Container(
                           width: double.infinity,
@@ -988,8 +915,12 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
                             style: TextStyle(fontSize: 14, color: Colors.orange),
                           ),
                         )
+                      else if (visibleTeams.isEmpty)
+                        const SizedBox.shrink()
                       else
                         DropdownButtonFormField<String>(
+                          key: ValueKey(
+                              'team_${showAllTeams}_${visibleTeams.map((t) => t.id).join(',')}_$selectedTeamId'),
                           initialValue: selectedTeamId,
                           decoration: InputDecoration(
                             filled: true,
@@ -1000,7 +931,7 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
                               borderSide: BorderSide(color: Colors.grey.shade300),
                             ),
                           ),
-                          items: availableTeams.map((team) {
+                          items: visibleTeams.map((team) {
                             final teamData = team.data();
                             final teamName =
                             (teamData['teamName'] ?? team.id).toString();
@@ -1010,7 +941,7 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
                             return DropdownMenuItem<String>(
                               value: team.id,
                               child: Text(
-                                '$teamName • $leaderName',
+                                '$teamName • $leaderName${_distLabel(team, areaLat, areaLng)}',
                                 style: const TextStyle(fontSize: 14),
                               ),
                             );
@@ -1133,6 +1064,7 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
                                 const SizedBox(height: 7),
                                 TextField(
                                   controller: latitudeController,
+                                  onChanged: (_) => setDialogState(() {}),
                                   keyboardType: const TextInputType
                                       .numberWithOptions(decimal: true, signed: true),
                                   decoration: InputDecoration(
@@ -1164,6 +1096,7 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
                                 const SizedBox(height: 7),
                                 TextField(
                                   controller: longitudeController,
+                                  onChanged: (_) => setDialogState(() {}),
                                   keyboardType: const TextInputType
                                       .numberWithOptions(decimal: true, signed: true),
                                   decoration: InputDecoration(
@@ -1192,6 +1125,7 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
                       const SizedBox(height: 7),
                       TextField(
                         controller: addressController,
+                        onChanged: (_) => setDialogState(() {}),
                         maxLines: 2,
                         decoration: InputDecoration(
                           hintText: 'Enter emergency location/address',
@@ -1324,8 +1258,6 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
                       : const Icon(Icons.add_task_rounded, size: 17),
                   label: Text(isCreating ? 'Creating...' : 'Create Task'),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    foregroundColor: Colors.white,
                   ),
                 ),
               ],
@@ -1392,6 +1324,124 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
     );
   }
 
+
+  // ============================================================
+  // AREA FILTER
+  // Task assign karte waqt sirf usi affected area ki teams dikhao:
+  //  - team ki location task ki location se _kTeamRadiusKm ke andar ho, YA
+  //  - team ka assignedArea task ke city/address se match kare.
+  // Agar task ki location maloom na ho to sab available teams dikhti hain.
+  // Admin "Show all" se baqi teams bhi dekh sakta hai.
+  // ============================================================
+
+  static const double _kTeamRadiusKm = 50;
+
+  double? _numVal(dynamic v) {
+    if (v is num) return v.toDouble();
+    return double.tryParse((v ?? '').toString().trim());
+  }
+
+  double _distanceKm(double lat1, double lon1, double lat2, double lon2) {
+    const r = 6371.0;
+    double rad(double d) => d * math.pi / 180;
+    final dLat = rad(lat2 - lat1);
+    final dLon = rad(lon2 - lon1);
+    final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(rad(lat1)) *
+            math.cos(rad(lat2)) *
+            math.sin(dLon / 2) *
+            math.sin(dLon / 2);
+    return r * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+  }
+
+  double? _teamDistanceKm(
+      QueryDocumentSnapshot<Map<String, dynamic>> team,
+      double? lat,
+      double? lng,
+      ) {
+    if (lat == null || lng == null) return null;
+    final d = team.data();
+    final tLat = _numVal(d['latitude']);
+    final tLng = _numVal(d['longitude']);
+    if (tLat == null || tLng == null || (tLat == 0 && tLng == 0)) return null;
+    return _distanceKm(lat, lng, tLat, tLng);
+  }
+
+  List<QueryDocumentSnapshot<Map<String, dynamic>>> _teamsForArea(
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> teams, {
+        double? lat,
+        double? lng,
+        String area = '',
+      }) {
+    final a = area.trim().toLowerCase();
+    final hasLocation = (lat != null && lng != null) || a.isNotEmpty;
+    if (!hasLocation) return teams;
+
+    return teams.where((team) {
+      final dist = _teamDistanceKm(team, lat, lng);
+      if (dist != null && dist <= _kTeamRadiusKm) return true;
+
+      final ta =
+      (team.data()['assignedArea'] ?? '').toString().trim().toLowerCase();
+      if (a.isNotEmpty &&
+          ta.isNotEmpty &&
+          !ta.startsWith('lat:') &&
+          (ta.contains(a) || a.contains(ta))) {
+        return true;
+      }
+      return false;
+    }).toList();
+  }
+
+  String _distLabel(
+      QueryDocumentSnapshot<Map<String, dynamic>> team,
+      double? lat,
+      double? lng,
+      ) {
+    final d = _teamDistanceKm(team, lat, lng);
+    if (d == null) return '';
+    return ' • ${d.toStringAsFixed(d < 10 ? 1 : 0)} km';
+  }
+
+  Widget _areaFilterBar({
+    required bool showAll,
+    required int shown,
+    required int total,
+    required String area,
+    required VoidCallback onToggle,
+  }) {
+    final areaName = area.trim().isEmpty ? 'this area' : area.trim();
+    final text = showAll
+        ? 'Showing all $total available teams.'
+        : shown == 0
+        ? 'No available team in $areaName (within ${_kTeamRadiusKm.toInt()} km).'
+        : 'Showing $shown team(s) in $areaName (within ${_kTeamRadiusKm.toInt()} km).';
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(
+                fontSize: 12.5,
+                color: !showAll && shown == 0
+                    ? Colors.orange.shade800
+                    : Colors.grey.shade700,
+              ),
+            ),
+          ),
+          if (total > 0 && (showAll || shown < total))
+            TextButton(
+              onPressed: onToggle,
+              child: Text(showAll ? 'Only this area' : 'Show all'),
+            ),
+        ],
+      ),
+    );
+  }
+
   // ============================================================
   // ASSIGN DIALOG (unchanged logic)
   // ============================================================
@@ -1401,6 +1451,7 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
       List<QueryDocumentSnapshot<Map<String, dynamic>>> teams,
       ) {
     String? selectedTeamId;
+    bool showAllTeams = false;
 
     final availableTeams = teams.where((team) {
       final status = (team.data()['status'] ?? '').toString().toLowerCase();
@@ -1414,10 +1465,23 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
           builder: (context, setDialogState) {
             final data = report.data();
 
+            final areaLat = _numVal(data['latitude']);
+            final areaLng = _numVal(data['longitude']);
+            final areaText =
+            (data['city'] ?? data['location'] ?? '').toString();
+            final visibleTeams = showAllTeams
+                ? availableTeams
+                : _teamsForArea(availableTeams,
+                lat: areaLat, lng: areaLng, area: areaText);
+            if (selectedTeamId != null &&
+                !visibleTeams.any((t) => t.id == selectedTeamId)) {
+              selectedTeamId = null;
+            }
+
             return AlertDialog(
               title: Row(
                 children: [
-                  Icon(Icons.assignment_ind_rounded, color: AppColors.primary),
+                  Icon(Icons.assignment_ind_rounded, color: Color(0xFF6750A4)),
                   const SizedBox(width: 10),
                   const Text(
                     'Assign Rescue Task',
@@ -1431,16 +1495,25 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    RescueTaskWidgets.dialogInfo('Emergency', (data['emergencyType'] ?? 'Emergency').toString()),
-                    RescueTaskWidgets.dialogInfo('Citizen', (data['reporterName'] ?? 'Unknown Citizen').toString()),
+                    RescueTaskWidgets.dialogInfo('Emergency', _reportField(data, ['emergencyType', 'incident_type'], 'Emergency')),
+                    RescueTaskWidgets.dialogInfo('Citizen', _reportField(data, ['reporterName', 'name'], 'Unknown Citizen')),
                     RescueTaskWidgets.dialogInfo('Location', (data['city'] ?? data['location'] ?? 'Unknown').toString()),
-                    RescueTaskWidgets.dialogInfo('Severity', (data['severity'] ?? 'Unknown').toString()),
+                    RescueTaskWidgets.dialogInfo('Severity', _reportField(data, ['priority', 'severity', 'severity_level', 'severityLevel'], 'Unknown')),
                     const SizedBox(height: 16),
                     const Text(
                       'Select Rescue Team',
                       style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
                     ),
                     const SizedBox(height: 7),
+                    _areaFilterBar(
+                      showAll: showAllTeams,
+                      shown: visibleTeams.length,
+                      total: availableTeams.length,
+                      area: areaText,
+                      onToggle: () => setDialogState(() {
+                        showAllTeams = !showAllTeams;
+                      }),
+                    ),
                     if (availableTeams.isEmpty)
                       Container(
                         width: double.infinity,
@@ -1454,9 +1527,13 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
                           style: TextStyle(fontSize: 14, color: Colors.orange),
                         ),
                       )
+                    else if (visibleTeams.isEmpty)
+                      const SizedBox.shrink()
                     else
                       DropdownButtonFormField<String>(
-                        initialValue: selectedTeamId,
+                        key: ValueKey(
+                              'team_${showAllTeams}_${visibleTeams.map((t) => t.id).join(',')}_$selectedTeamId'),
+                          initialValue: selectedTeamId,
                         decoration: InputDecoration(
                           filled: true,
                           fillColor: Colors.grey.shade100,
@@ -1465,14 +1542,14 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
                             borderSide: BorderSide(color: Colors.grey.shade300),
                           ),
                         ),
-                        items: availableTeams.map((team) {
+                        items: visibleTeams.map((team) {
                           final teamData = team.data();
                           final teamName = (teamData['teamName'] ?? team.id).toString();
                           final leaderName = (teamData['leaderName'] ?? 'No leader').toString();
 
                           return DropdownMenuItem<String>(
                             value: team.id,
-                            child: Text('$teamName • $leaderName',
+                            child: Text('$teamName • $leaderName${_distLabel(team, areaLat, areaLng)}',
                                 style: const TextStyle(fontSize: 14)),
                           );
                         }).toList(),
@@ -1491,11 +1568,10 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
                   child: const Text('Cancel'),
                 ),
                 ElevatedButton.icon(
-                  onPressed: availableTeams.isEmpty || selectedTeamId == null
+                  onPressed: visibleTeams.isEmpty || selectedTeamId == null
                       ? null
                       : () async {
-                    final selectedTeam = availableTeams
-                        .firstWhere((team) => team.id == selectedTeamId);
+                    final selectedTeam = visibleTeams.firstWhere((team) => team.id == selectedTeamId);
 
                     await _assignTask(report, selectedTeam);
 
@@ -1506,8 +1582,6 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
                   icon: const Icon(Icons.send_rounded, size: 16),
                   label: const Text('Assign Task'),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    foregroundColor: Colors.white,
                   ),
                 ),
               ],
@@ -1555,6 +1629,7 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
       List<QueryDocumentSnapshot<Map<String, dynamic>>> teams,
       ) {
     String? selectedTeamId;
+    bool showAllTeams = false;
 
     final availableTeams = teams.where((team) {
       final status = (team.data()['status'] ?? '').toString().toLowerCase();
@@ -1568,10 +1643,23 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
+            final areaLat = _numVal(data['latitude']);
+            final areaLng = _numVal(data['longitude']);
+            final areaText = (data['city'] ?? data['address'] ?? data['location'] ?? '')
+                .toString();
+            final visibleTeams = showAllTeams
+                ? availableTeams
+                : _teamsForArea(availableTeams,
+                lat: areaLat, lng: areaLng, area: areaText);
+            if (selectedTeamId != null &&
+                !visibleTeams.any((t) => t.id == selectedTeamId)) {
+              selectedTeamId = null;
+            }
+
             return AlertDialog(
               title: Row(
                 children: [
-                  Icon(Icons.assignment_ind_rounded, color: AppColors.primary),
+                  Icon(Icons.assignment_ind_rounded, color: Color(0xFF6750A4)),
                   const SizedBox(width: 10),
                   const Text(
                     'Assign Rescue Task',
@@ -1602,6 +1690,15 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
                         style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
                       ),
                       const SizedBox(height: 7),
+                      _areaFilterBar(
+                        showAll: showAllTeams,
+                        shown: visibleTeams.length,
+                        total: availableTeams.length,
+                        area: areaText,
+                        onToggle: () => setDialogState(() {
+                          showAllTeams = !showAllTeams;
+                        }),
+                      ),
                       if (availableTeams.isEmpty)
                         Container(
                           width: double.infinity,
@@ -1615,8 +1712,12 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
                             style: TextStyle(fontSize: 14, color: Colors.orange),
                           ),
                         )
+                      else if (visibleTeams.isEmpty)
+                        const SizedBox.shrink()
                       else
                         DropdownButtonFormField<String>(
+                          key: ValueKey(
+                              'team_${showAllTeams}_${visibleTeams.map((t) => t.id).join(',')}_$selectedTeamId'),
                           initialValue: selectedTeamId,
                           decoration: InputDecoration(
                             filled: true,
@@ -1626,14 +1727,14 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
                               borderSide: BorderSide(color: Colors.grey.shade300),
                             ),
                           ),
-                          items: availableTeams.map((team) {
+                          items: visibleTeams.map((team) {
                             final teamData = team.data();
                             final teamName = (teamData['teamName'] ?? team.id).toString();
                             final leaderName = (teamData['leaderName'] ?? 'No leader').toString();
 
                             return DropdownMenuItem<String>(
                               value: team.id,
-                              child: Text('$teamName • $leaderName',
+                              child: Text('$teamName • $leaderName${_distLabel(team, areaLat, areaLng)}',
                                   style: const TextStyle(fontSize: 14)),
                             );
                           }).toList(),
@@ -1653,11 +1754,10 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
                   child: const Text('Cancel'),
                 ),
                 ElevatedButton.icon(
-                  onPressed: availableTeams.isEmpty || selectedTeamId == null
+                  onPressed: visibleTeams.isEmpty || selectedTeamId == null
                       ? null
                       : () async {
-                    final selectedTeam = availableTeams
-                        .firstWhere((team) => team.id == selectedTeamId);
+                    final selectedTeam = visibleTeams.firstWhere((team) => team.id == selectedTeamId);
 
                     await _assignTeamToTask(task, selectedTeam);
 
@@ -1668,8 +1768,6 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
                   icon: const Icon(Icons.send_rounded, size: 16),
                   label: const Text('Assign Task'),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    foregroundColor: Colors.white,
                   ),
                 ),
               ],
@@ -1734,7 +1832,7 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
                           width: 42,
                           height: 42,
                           decoration: BoxDecoration(
-                            color: AppColors.primary,
+                            color: Color(0xFF6750A4),
                             borderRadius: BorderRadius.circular(10),
                           ),
                           child: const Icon(
@@ -1808,7 +1906,7 @@ class _RescueTasksScreenState extends State<RescueTasksScreen> {
             Icons.local_shipping_rounded),
         RescueTaskWidgets.detailBox('Leader', data['leaderName']?.toString() ?? 'Unassigned',
             Icons.person_pin_rounded),
-        RescueTaskWidgets.detailBox('Severity', data['severity']?.toString() ?? 'Unknown',
+        RescueTaskWidgets.detailBox('Severity', (data['priority'] ?? data['severity'])?.toString() ?? 'Unknown',
             Icons.priority_high_rounded),
         RescueTaskWidgets.detailBox('Source', _sourceLabel(data['sourceType']?.toString()),
             Icons.source_rounded),
