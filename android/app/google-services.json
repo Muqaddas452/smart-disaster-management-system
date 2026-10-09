@@ -64,6 +64,28 @@
     },
     {
       "client_info": {
+<<<<<<< HEAD
+=======
+        "mobilesdk_app_id": "1:537675524238:android:bfe59178968f97bb4201df",
+        "android_client_info": {
+          "package_name": "com.example.rescue_team_dashboard"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCG3sI8DEdenv63MMU6qOFQGmLJhmk20Zc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+>>>>>>> main
         "mobilesdk_app_id": "1:537675524238:android:2c1e85f24e7821ca4201df",
         "android_client_info": {
           "package_name": "com.example.smartdisasterapp"
@@ -73,6 +95,28 @@
       "api_key": [
         {
           "current_key": "AIzaSyCG3sI8DEdenv63MMU6qOFQGmLJhmk20Zc"
+<<<<<<< HEAD
+=======
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:537675524238:android:00fbc0f9115286214201df",
+        "android_client_info": {
+          "package_name": "com.fyp.smartdisaster.management"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCG3sI8DEdenv63MMU6qOFQGmLJhmk20Zc"
+>>>>>>> main
         }
       ],
       "services": {
