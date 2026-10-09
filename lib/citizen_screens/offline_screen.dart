@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:smart_disaster_management_system/citizen_screens/report_status_screen.dart';
+//import 'package:smart_disaster_management_system/citizen_screens/report_status_screen.dart';
 
 
 class OfflineStatusScreen extends StatefulWidget {
@@ -28,12 +28,12 @@ class _OfflineStatusScreenState extends State<OfflineStatusScreen>
     Connectivity().onConnectivityChanged.listen((result) {
       if (!mounted) return;
       final isOnline = result != ConnectivityResult.none;
-      if (isOnline) {
+      /*if (isOnline) {
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (_) => const ReportStatusScreen()),
         );
-      }
+      }*/
     });
   }
 

@@ -6,7 +6,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <application
+<<<<<<< HEAD
+        android:label="adminpanel_new"
+=======
         android:label="smartdisasterapp"
+>>>>>>> main
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         ##Location and GoogleMapAPI

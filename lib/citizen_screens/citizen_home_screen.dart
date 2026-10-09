@@ -4,7 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:geolocator/geolocator.dart';
 
-import 'package:smart_disaster_management_system/citizen_screens/safety_tips_screen.dart';
+//import 'package:smart_disaster_management_system/citizen_screens/safety_tips_screen.dart';
 import '../../citizen_screens/report_screen.dart';
 import 'alert_screen.dart';
 import 'map_screen.dart';
@@ -855,10 +855,10 @@ class _SafetyTipsButton extends StatelessWidget {
       width: double.infinity,
       child: ElevatedButton.icon(
         onPressed: () {
-          Navigator.push(
+       /*   Navigator.push(
             context,
             MaterialPageRoute(builder: (context) => const SafetyTipsScreen()),
-          );
+          );*/
         },
         icon: const Icon(Icons.shield_outlined, size: 20),
         label: const Text('View Critical Safety Tips',

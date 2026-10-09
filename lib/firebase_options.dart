@@ -17,10 +17,7 @@ import 'package:flutter/foundation.dart'
 class DefaultFirebaseOptions {
   static FirebaseOptions get currentPlatform {
     if (kIsWeb) {
-      throw UnsupportedError(
-        'DefaultFirebaseOptions have not been configured for web - '
-        'you can reconfigure this by running the FlutterFire CLI again.',
-      );
+      return web;
     }
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:
@@ -28,15 +25,9 @@ class DefaultFirebaseOptions {
       case TargetPlatform.iOS:
         return ios;
       case TargetPlatform.macOS:
-        throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for macos - '
-          'you can reconfigure this by running the FlutterFire CLI again.',
-        );
+        return macos;
       case TargetPlatform.windows:
-        throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for windows - '
-          'you can reconfigure this by running the FlutterFire CLI again.',
-        );
+        return windows;
       case TargetPlatform.linux:
         throw UnsupportedError(
           'DefaultFirebaseOptions have not been configured for linux - '
@@ -49,9 +40,19 @@ class DefaultFirebaseOptions {
     }
   }
 
+  static const FirebaseOptions web = FirebaseOptions(
+    apiKey: 'AIzaSyDkmEqbur_wzHWIygmJhrAdPyvCzXke7-g',
+    appId: '1:537675524238:web:45a8acbe57152ec24201df',
+    messagingSenderId: '537675524238',
+    projectId: 'fir-setup-demo-first',
+    authDomain: 'fir-setup-demo-first.firebaseapp.com',
+    storageBucket: 'fir-setup-demo-first.firebasestorage.app',
+    measurementId: 'G-8NRM1Z9WTB',
+  );
+
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyCG3sI8DEdenv63MMU6qOFQGmLJhmk20Zc',
-    appId: '1:537675524238:android:2c1e85f24e7821ca4201df',
+    appId: '1:537675524238:android:34cce07e88a2e5ba4201df',
     messagingSenderId: '537675524238',
     projectId: 'fir-setup-demo-first',
     storageBucket: 'fir-setup-demo-first.firebasestorage.app',
@@ -59,10 +60,29 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions ios = FirebaseOptions(
     apiKey: 'AIzaSyDVH416gMIuiH-dnPFZSBjGRjIYSX0ZhqU',
-    appId: '1:537675524238:ios:5d1182c246b88ae44201df',
+    appId: '1:537675524238:ios:889659862bf32aa04201df',
     messagingSenderId: '537675524238',
     projectId: 'fir-setup-demo-first',
     storageBucket: 'fir-setup-demo-first.firebasestorage.app',
-    iosBundleId: 'com.example.myApp',
+    iosBundleId: 'com.example.adminpanelNew',
+  );
+
+  static const FirebaseOptions macos = FirebaseOptions(
+    apiKey: 'AIzaSyDVH416gMIuiH-dnPFZSBjGRjIYSX0ZhqU',
+    appId: '1:537675524238:ios:889659862bf32aa04201df',
+    messagingSenderId: '537675524238',
+    projectId: 'fir-setup-demo-first',
+    storageBucket: 'fir-setup-demo-first.firebasestorage.app',
+    iosBundleId: 'com.example.adminpanelNew',
+  );
+
+  static const FirebaseOptions windows = FirebaseOptions(
+    apiKey: 'AIzaSyDkmEqbur_wzHWIygmJhrAdPyvCzXke7-g',
+    appId: '1:537675524238:web:7671b90899672d104201df',
+    messagingSenderId: '537675524238',
+    projectId: 'fir-setup-demo-first',
+    authDomain: 'fir-setup-demo-first.firebaseapp.com',
+    storageBucket: 'fir-setup-demo-first.firebasestorage.app',
+    measurementId: 'G-7DW6P7BR43',
   );
 }
