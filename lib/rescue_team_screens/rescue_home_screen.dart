@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -12,6 +13,9 @@ import 'package:smartdisaster/rescue_team_screens/team_leader/leader_status_over
 import 'team_leader/add_team_member.dart';
 import 'package:smartdisaster/rescue_team_screens/rescue_map_screen.dart';
 import 'package:smartdisaster/services/map_service.dart';
+import 'package:smartdisaster/models/polygon_model.dart';
+import 'package:smartdisaster/utils/priority_helper.dart';
+import 'package:smartdisaster/services/fcm_token_service.dart';
 import 'package:smartdisaster/widgets/map/disaster_map.dart';
 import 'package:smartdisaster/database/rescue_dao.dart';
 import 'package:smartdisaster/database/db_Helper.dart';
@@ -36,8 +40,10 @@ class RescueTeamHomeScreen extends StatefulWidget {
   State<RescueTeamHomeScreen> createState() => _RescueTeamHomeScreenState();
 }
 
-class _RescueTeamHomeScreenState extends State<RescueTeamHomeScreen> {
+class _RescueTeamHomeScreenState extends State<RescueTeamHomeScreen>
+    with WidgetsBindingObserver {
   int _selectedIndex = 0;
+  StreamSubscription<List<ConnectivityResult>>? _connSub;
   bool _isOffline = false;
 
   static const Color kGreen = Color(0xFF1E5631);
@@ -48,13 +54,50 @@ class _RescueTeamHomeScreenState extends State<RescueTeamHomeScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _setOnline(true);
+    // Leader/member ka token har dafa taza save (reopen, token refresh) —
+    // taake app band hone par bhi task notifications milen.
+    final String? myUid = FirebaseAuth.instance.currentUser?.uid;
+    if (myUid != null) {
+      FcmTokenService.saveFCMToken(myUid, collection: 'rescueTeamUsers');
+      FcmTokenService.listenForTokenRefresh(myUid, collection: 'rescueTeamUsers');
+    }
     _checkConnectivity();
-    Connectivity().onConnectivityChanged.listen((results) {
+    _connSub = Connectivity().onConnectivityChanged.listen((results) {
       final offline = results.contains(ConnectivityResult.none);
       if (mounted && _isOffline != offline) {
         setState(() => _isOffline = offline);
       }
     });
+  }
+
+  // Online/offline chip sahi rakhne ke liye: app background mein jaye to offline.
+  void _setOnline(bool online) {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    FirebaseFirestore.instance
+        .collection('rescueTeamUsers')
+        .doc(uid)
+        .set({'isOnline': online}, SetOptions(merge: true))
+        .catchError((_) {});
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _setOnline(true);
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      _setOnline(false);
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _connSub?.cancel();
+    super.dispose();
   }
 
   Future<void> _checkConnectivity() async {
@@ -143,6 +186,8 @@ class _RescueTeamHomeScreenState extends State<RescueTeamHomeScreen> {
                 const SizedBox(height: 12),
                 _alertAndRiskMapSection(),
                 const SizedBox(height: 14),
+                // Purane broadcast "High Priority Alerts" ki list home se hata di:
+                // ab sirf active High task / zone (upar) aur Urgent tasks dikhte hain.
                 _urgentTasks(),
                 const SizedBox(height: 14),
                 _actionButtons(),
@@ -178,84 +223,165 @@ class _RescueTeamHomeScreenState extends State<RescueTeamHomeScreen> {
     );
   }
 
+  // Home par SIRF High priority dikhta hai (medium/low nahi):
+  //  1) is user ke active HIGH tasks (citizen report ya admin ke manual task), warna
+  //  2) active HIGH affected zone, warna
+  //  3) "koi high alert nahi".
   Widget _alertAndRiskMapSection() {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>?>(
-      stream: MapService.instance.getLatestActiveAlertDoc()!,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
-          return const Padding(
-            padding: EdgeInsets.symmetric(vertical: 24),
-            child: Center(child: CircularProgressIndicator(color: kGreen)),
-          );
-        }
+      stream: MapService.instance.getLatestActiveAlertDoc(),
+      builder: (context, zoneSnap) {
+        return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          stream: _myTasksQuery()?.snapshots(),
+          builder: (context, taskSnap) {
+            if (!zoneSnap.hasData && !taskSnap.hasData) {
+              return const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Center(child: CircularProgressIndicator(color: kGreen)),
+              );
+            }
 
-        final docs = snapshot.data?.docs ?? [];
-        if (docs.isEmpty) {
-          return Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: const Text(
-              'No active alerts right now.',
-              style: TextStyle(color: Colors.black54, fontSize: 12),
-            ),
-          );
-        }
+            final highTasks = (taskSnap.data?.docs ?? []).where((d) =>
+            !['resolved', 'rejected'].contains(d.data()['status'] ?? '') &&
+                isHighPriority(d.data())).toList()
+              ..sort((a, b) {
+                final ta = a.data()['createdAt'];
+                final tb = b.data()['createdAt'];
+                if (ta is Timestamp && tb is Timestamp) return tb.compareTo(ta);
+                return 0;
+              });
 
-        final doc = docs.first;
-        final data = doc.data();
+            final highZones = (zoneSnap.data?.docs ?? []).where((d) {
+              final st = (d.data()['status'] ?? '').toString().toLowerCase();
+              return !['resolved', 'inactive', 'closed', 'ended'].contains(st) &&
+                  isHighPriority(d.data());
+            }).toList();
 
-        final String title = (data['title'] ?? 'Alert').toString();
-        final String message = (data['message'] ?? '').toString();
-        final String riskLevel = (data['riskLevel'] ?? 'Medium').toString();
-        final double lat = (data['latitude'] as num).toDouble();
-        final double lng = (data['longitude'] as num).toDouble();
-        final DateTime createdAt =
-            (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now();
-
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _alertCard(
-              title: title,
-              message: message,
-              riskLevel: riskLevel,
-              createdAt: createdAt,
-              onTap: () {
-                final navItems = _getNavItems();
-                final mapIndex = navItems.indexWhere((item) => item['label'] == 'Map');
-                if (mapIndex != -1) {
-                  setState(() => _selectedIndex = mapIndex);
-                }
-              },
-            ),
-            const SizedBox(height: 14),
-            SizedBox(
-              height: 200,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(10),
-                child: DisasterMap(
-                  isAdmin: true,
-                  isRescueView: true,
-                  zonesStream: Stream.value(
-                    [MapService.instance.alertDataToPolygon(data, doc.id)],
+            if (highTasks.isEmpty && highZones.isEmpty) {
+              // Koi active High alert nahi — message ke saath map phir bhi dikhta rahe
+              // (user ki apni location par).
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Text(
+                      'No active high priority alerts right now.',
+                      style: TextStyle(color: Colors.black54, fontSize: 12),
+                    ),
                   ),
-                  initialCameraPosition: CameraPosition(
-                    target: LatLng(lat, lng),
-                    zoom: 11,
+                  const SizedBox(height: 14),
+                  SizedBox(
+                    height: 200,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: DisasterMap(
+                        isAdmin: true,
+                        isRescueView: true,
+                        zonesStream: Stream.value(<PolygonModel>[]),
+                        initialCameraPosition: const CameraPosition(
+                          target: LatLng(30.3753, 69.3451),
+                          zoom: 5,
+                        ),
+                        autoFollowLocation: true,
+                        showControls: true,
+                      ),
+                    ),
                   ),
-                  autoFollowLocation: false,
-                  showControls: false,
+                ],
+              );
+            }
+
+            final bool fromTask = highTasks.isNotEmpty;
+            final doc = fromTask ? highTasks.first : highZones.first;
+            final data = doc.data();
+
+            String title;
+            String message;
+            double lat;
+            double lng;
+            List<PolygonModel> polygons;
+
+            if (fromTask) {
+              title = taskType(data);
+              message = (data['description'] ?? '').toString().trim().isNotEmpty
+                  ? data['description'].toString()
+                  : taskAddress(data, fallback: '');
+              lat = ((data['latitude'] ?? data['lat']) as num?)?.toDouble() ?? 30.3753;
+              lng = ((data['longitude'] ?? data['lng']) as num?)?.toDouble() ?? 69.3451;
+              polygons = <PolygonModel>[];
+            } else {
+              final String disasterType = (data['disasterType'] ?? '').toString().trim();
+              title = (data['title'] ?? data['type'] ?? '').toString().trim().isNotEmpty
+                  ? (data['title'] ?? data['type']).toString()
+                  : (disasterType.isNotEmpty ? '$disasterType Alert' : 'Alert');
+              message = (data['message'] ?? data['description'] ?? data['zoneName'] ?? '')
+                  .toString();
+              final poly = MapService.instance.alertDataToPolygon(data, doc.id);
+              polygons = [poly];
+              lat = ((data['latitude'] ?? data['lat']) as num?)?.toDouble() ??
+                  (poly.coordinates.isNotEmpty ? poly.coordinates.first.latitude : 30.3753);
+              lng = ((data['longitude'] ?? data['lng']) as num?)?.toDouble() ??
+                  (poly.coordinates.isNotEmpty ? poly.coordinates.first.longitude : 69.3451);
+            }
+            final DateTime createdAt =
+                (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now();
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _alertCard(
+                  title: title,
+                  message: message,
+                  riskLevel: 'High',
+                  createdAt: createdAt,
+                  onTap: () {
+                    final navItems = _getNavItems();
+                    final mapIndex = navItems.indexWhere((item) => item['label'] == 'Map');
+                    if (mapIndex != -1) {
+                      setState(() => _selectedIndex = mapIndex);
+                    }
+                  },
                 ),
-              ),
-            ),
-          ],
+                const SizedBox(height: 14),
+                SizedBox(
+                  height: 200,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: DisasterMap(
+                      isAdmin: true,
+                      isRescueView: true,
+                      zonesStream: Stream.value(polygons),
+                      initialCameraPosition: CameraPosition(
+                        target: LatLng(lat, lng),
+                        zoom: 11,
+                      ),
+                      autoFollowLocation: false,
+                      showControls: false,
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
         );
       },
     );
+  }
+
+  /// Is user ke tasks ki query (leader: team ke sab, member: apne assigned).
+  Query<Map<String, dynamic>>? _myTasksQuery() {
+    final String? uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return null;
+    final tasksRef = FirebaseFirestore.instance.collection('tasks');
+    return widget.isLeader
+        ? tasksRef.where('teamId', isEqualTo: widget.teamId)
+        : tasksRef.where('assignedMemberIds', arrayContains: uid);
   }
 
   String _timeAgo(DateTime dt) {
@@ -334,6 +460,77 @@ class _RescueTeamHomeScreenState extends State<RescueTeamHomeScreen> {
     );
   }
 
+  // Admin ke bheje HIGH priority alerts (broadcast_alerts) — leader aur member
+  // dono ki home par. Priority admin ne jo rakhi wohi dikhti hai.
+  // ignore: unused_element
+  Widget _highPriorityAlerts() {
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance.collection('broadcast_alerts').limit(40).snapshots(),
+      builder: (context, snapshot) {
+        final all = snapshot.data?.docs ?? [];
+        final high = all.where((d) => isHighPriority(d.data())).toList();
+
+        DateTime timeOf(Map<String, dynamic> m) {
+          final t = m['createdAt'] ?? m['time'];
+          if (t is Timestamp) return t.toDate();
+          if (t is String) return DateTime.tryParse(t) ?? DateTime.fromMillisecondsSinceEpoch(0);
+          return DateTime.fromMillisecondsSinceEpoch(0);
+        }
+
+        high.sort((a, b) => timeOf(b.data()).compareTo(timeOf(a.data())));
+        if (high.isEmpty) return const SizedBox.shrink();
+
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'High Priority Alerts',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.black87),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                    decoration: BoxDecoration(color: kRed, borderRadius: BorderRadius.circular(20)),
+                    child: Text(
+                      '${high.length} HIGH',
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 10, color: Colors.white),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              ...high.take(3).map((d) {
+                final m = d.data();
+                final String title = (m['title'] ?? m['disaster'] ?? m['disasterType'] ?? 'Emergency Alert').toString();
+                final String area = (m['targetArea'] ?? m['district'] ?? m['city'] ?? '').toString();
+                final String message = (m['message'] ?? '').toString();
+                final DateTime t = timeOf(m);
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: _alertCard(
+                    title: area.isEmpty ? title : '$title • $area',
+                    message: message,
+                    riskLevel: 'High',
+                    createdAt: t.millisecondsSinceEpoch == 0 ? DateTime.now() : t,
+                    onTap: () {
+                      final navItems = _getNavItems();
+                      final mapIndex = navItems.indexWhere((item) => item['label'] == 'Map');
+                      if (mapIndex != -1) setState(() => _selectedIndex = mapIndex);
+                    },
+                  ),
+                );
+              }),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   Widget _urgentTasks() {
     final String? uid = FirebaseAuth.instance.currentUser?.uid;
 
@@ -341,14 +538,13 @@ class _RescueTeamHomeScreenState extends State<RescueTeamHomeScreen> {
       return const SizedBox.shrink();
     }
 
+    // priority ka filter ab client par (shared helper se) hota hai — pehle
+    // Firestore mein exact 'high' match hota tha, jis se "High"/"HIGH" ya
+    // severity_level mein likhi priority wale tasks kabhi nahi aate the.
     final tasksRef = FirebaseFirestore.instance.collection('tasks');
     final Query<Map<String, dynamic>> query = widget.isLeader
-        ? tasksRef
-        .where('teamId', isEqualTo: widget.teamId)
-        .where('priority', isEqualTo: 'high')
-        : tasksRef
-        .where('assignedMemberIds', arrayContains: uid)
-        .where('priority', isEqualTo: 'high');
+        ? tasksRef.where('teamId', isEqualTo: widget.teamId)
+        : tasksRef.where('assignedMemberIds', arrayContains: uid);
 
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: query.snapshots(includeMetadataChanges: true),
@@ -362,7 +558,9 @@ class _RescueTeamHomeScreenState extends State<RescueTeamHomeScreen> {
 
         final docs = snapshot.data?.docs ?? [];
         final activeUrgentDocs = docs
-            .where((d) => (d.data()['status'] ?? '') != 'resolved')
+            .where((d) =>
+        !['resolved', 'rejected'].contains(d.data()['status'] ?? '') &&
+            isHighPriority(d.data()))
             .toList();
 
         return Column(
@@ -421,8 +619,8 @@ class _RescueTeamHomeScreenState extends State<RescueTeamHomeScreen> {
   }
 
   Widget _taskCard(String taskId, Map<String, dynamic> data) {
-    final String type = data['type'] ?? 'Task';
-    final String address = data['address'] ?? 'Location unavailable';
+    final String type = taskType(data);
+    final String address = taskAddress(data, fallback: 'Location unavailable');
 
     String timeAgo = '-';
     final createdAt = data['createdAt'];

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:smartdisaster/services/email_verification.dart';
 import 'pending_approval_screen.dart';
 
 class RescueRegistrationScreen extends StatefulWidget {
@@ -91,7 +92,7 @@ class _RescueRegistrationScreenState extends State<RescueRegistrationScreen> {
 
       final WriteBatch batch = FirebaseFirestore.instance.batch();
 
-      batch.set(teamDocRef, {
+      final Map<String, dynamic> teamData = {
         'teamId': teamId,
         'teamName': _teamNameController.text.trim(),
         'teamType': _selectedTeamType,
@@ -107,8 +108,19 @@ class _RescueRegistrationScreenState extends State<RescueRegistrationScreen> {
         'members': int.tryParse(_membersCountController.text.trim()) ?? 1,
         'availability': 'Available',
         'status': 'pending',
-        'createdAt': FieldValue.serverTimestamp(),
-      });
+      };
+
+      // Email verify hone se PEHLE admin ko request nahi jaati: team ka data
+      // rescueTeamUsers.pendingTeam mein rukta hai, aur verify ke baad
+      // publishPendingTeam() isay rescueTeams mein likhta hai.
+      final bool deferTeam = needsEmailVerification(userCredential.user);
+
+      if (!deferTeam) {
+        batch.set(teamDocRef, {
+          ...teamData,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      }
 
       batch.set(FirebaseFirestore.instance.collection('rescueTeamUsers').doc(uid), {
         'uid': uid,
@@ -123,6 +135,10 @@ class _RescueRegistrationScreenState extends State<RescueRegistrationScreen> {
         'status': 'pending',
         'latitude': position.latitude,
         'longitude': position.longitude,
+        if (deferTeam) 'pendingTeam': {
+          ...teamData,
+          'createdAt': Timestamp.now(),
+        },
         'createdAt': FieldValue.serverTimestamp(),
       });
 
@@ -134,13 +150,31 @@ class _RescueRegistrationScreenState extends State<RescueRegistrationScreen> {
         'createdAt': FieldValue.serverTimestamp(),
       });
 
-      await batch.commit();
+      try {
+        await batch.commit();
+      } catch (e) {
+        // Firestore write failed after the Auth account was created — remove
+        // the half-created account so the user can simply try again instead
+        // of getting "email already in use".
+        await userCredential.user?.delete();
+        rethrow;
+      }
+
+      // Email ownership: inbox mein verification link bhejo. Jab tak verify
+      // na ho AuthWrapper "Verify your email" screen dikhata hai, uske baad
+      // Pending Approval.
+      final newUser = FirebaseAuth.instance.currentUser;
+      if (newUser != null) await sendVerificationEmail(newUser);
 
       if (mounted) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const PendingApprovalScreen()),
-        );
+        if (needsEmailVerification(newUser)) {
+          Navigator.of(context).popUntil((route) => route.isFirst);
+        } else {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (context) => const PendingApprovalScreen()),
+          );
+        }
       }
     } catch (e) {
       _showError('Registration failed: $e');

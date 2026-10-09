@@ -53,6 +53,15 @@ class LeaderStatusOverviewScreen extends StatelessWidget {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator(color: kGreen));
           }
+          if (snapshot.hasError) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text('Could not load tasks:\n${snapshot.error}',
+                    textAlign: TextAlign.center, style: const TextStyle(color: Colors.red)),
+              ),
+            );
+          }
           final docs = snapshot.data?.docs ?? [];
           if (docs.isEmpty) {
             return const Center(
@@ -97,7 +106,18 @@ class LeaderStatusOverviewScreen extends StatelessWidget {
         ? 'Not yet assigned'
         : assignedMembers.map((m) => (m is Map ? m['name'] : null) ?? 'Member').join(', ');
     final color = _statusColors[status] ?? Colors.grey;
-    final label = _statusLabels[status] ?? status;
+    String label = _statusLabels[status] ?? status;
+    // Task status 'assigned' poore time rehta hai; asli progress members ke
+    // apne status mein hai, is liye "x/y completed" dikhao.
+    if (status == 'assigned') {
+      final List ids = data['assignedMemberIds'] is List ? data['assignedMemberIds'] as List : [];
+      final Map ms = data['memberStatuses'] is Map ? data['memberStatuses'] as Map : {};
+      if (ids.isNotEmpty) {
+        final done = ids.where((id) => ms[id] == 'completed').length;
+        final moving = ids.where((id) => ms[id] == 'enroute' || ms[id] == 'in_progress').length;
+        label = '$done/${ids.length} done${moving > 0 ? ' · $moving active' : ''}';
+      }
+    }
     final overridden = data['statusOverriddenBy'] != null && status != 'resolved' && status != 'rejected';
 
     return Opacity(

@@ -1,10 +1,16 @@
+import 'dart:async';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:smartdisaster/database/map_icon_helper.dart';
+import 'package:smartdisaster/utils/priority_helper.dart';
 import 'enroute_tracking_service.dart';
-import 'assign_members_screen.dart';
+import 'assign_members_screen.dart'; // Import assign members screen
 
 class ViewTaskScreen extends StatefulWidget {
   final String taskId;
@@ -17,29 +23,31 @@ class ViewTaskScreen extends StatefulWidget {
 
 class _ViewTaskScreenState extends State<ViewTaskScreen> {
   static const Color kGreen = Color(0xFF1B5E38);
+  String? _uid;
+  String? _teamId; // Added to store leader's teamId
+  bool _isLeader = false;
 
-  // Task ka red pin map pe dikhana hai ya nahi (member ke liye zaroori hai).
-  // Agar leader ke map pe sirf members chahiye to isay false kar dein.
+  // Alert/task ki location par red pin (live map par destination).
   static const bool _showTaskMarker = true;
 
-  String? _uid;
-  String? _teamId;
-  bool _isLeader = false;
-  bool _iconsLoaded = false;
-
-  BitmapDescriptor? _memberIcon;
   GoogleMapController? _mapController;
+  StreamSubscription<Position>? _posSub; // member ki apni live location (map ke liye)
+  LatLng? _myPos;
+  Map<String, String>? _prevStatuses; // leader ko status change ka alert dene ke liye
   int _lastFitCount = -1;
+  bool _busy = false; // double-tap se bachne ke liye
+  bool _resumingTracking = false;
+  bool _resumeFailed = false;
 
   @override
   void initState() {
     super.initState();
     _loadUserRole();
-    _precacheMapIcons();
   }
 
   @override
   void dispose() {
+    _posSub?.cancel();
     _mapController?.dispose();
     super.dispose();
   }
@@ -55,146 +63,81 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
     if (mounted) {
       setState(() {
         _isLeader = data['isLeader'] == true || role == 'rescue_leader' || role == 'team_leader';
-        _teamId = data['teamId'];
+        _teamId = data['teamId']; // Fetch teamId from Firestore doc
       });
+      if (!_isLeader) _startOwnLocation();
     }
   }
 
-  // Member ka icon sirf EK baar banta hai (pehle har rebuild pe banta tha).
-  // Agar custom icon fail ho jaye to default blue marker use hoga,
-  // taake markers kabhi silently gayab na hon.
-  Future<void> _precacheMapIcons() async {
+  // Member ko map par APNI location (aur task tak raasta) dikhane ke liye.
+  // Yeh tracking (Firestore mein location likhna) se alag hai — sirf is screen
+  // ke liye local hai, jab tak screen khuli hai.
+  Future<void> _startOwnLocation() async {
     try {
-      _memberIcon = await createDirectIconMarker(Icons.person, Colors.blue.shade700, size: 50);
+      if (!await Geolocator.isLocationServiceEnabled()) return;
+      LocationPermission perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied) perm = await Geolocator.requestPermission();
+      if (perm == LocationPermission.denied || perm == LocationPermission.deniedForever) return;
+
+      final first = await Geolocator.getCurrentPosition();
+      if (mounted) setState(() => _myPos = LatLng(first.latitude, first.longitude));
+
+      _posSub = Geolocator.getPositionStream(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          distanceFilter: 15,
+        ),
+      ).listen((p) {
+        if (mounted) setState(() => _myPos = LatLng(p.latitude, p.longitude));
+      });
     } catch (e) {
-      debugPrint('ViewTask: member icon failed - $e');
-      _memberIcon = BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure);
+      debugPrint('ViewTask: own location failed - $e');
     }
-    if (mounted) setState(() => _iconsLoaded = true);
+  }
+
+  Future<void> _openNavigation(double lat, double lng) async {
+    final String origin =
+    _myPos != null ? '&origin=${_myPos!.latitude},${_myPos!.longitude}' : '';
+    final Uri uri = Uri.parse(
+        'https://www.google.com/maps/dir/?api=1$origin&destination=$lat,$lng&travelmode=driving');
+    try {
+      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!ok) _snack('Could not open Google Maps.');
+    } catch (e) {
+      _snack('Could not open Google Maps.');
+    }
+  }
+
+  // Leader ko foran pata chale jab koi member ka status badle
+  // (jaise "Ali is now Enroute").
+  void _notifyStatusChanges(Map<String, dynamic> taskData, Map<String, dynamic> memberStatuses) {
+    final Map<String, String> current =
+    memberStatuses.map((k, v) => MapEntry(k, v.toString()));
+    final prev = _prevStatuses;
+    _prevStatuses = current;
+    if (prev == null) return; // pehli dafa load — alert nahi
+
+    final List assigned = taskData['assignedMembers'] ?? [];
+    for (final e in current.entries) {
+      if (prev[e.key] == e.value) continue;
+      String name = 'Member';
+      for (final m in assigned) {
+        if (m is Map && (m['uid'] ?? m['id']) == e.key) {
+          name = (m['name'] ?? 'Member').toString();
+          break;
+        }
+      }
+      final msg = '$name is now ${_labelFor(e.value)}';
+      WidgetsBinding.instance.addPostFrameCallback((_) => _snack(msg));
+    }
   }
 
   // --- TASK STATUS ACTIONS ---
-  Future<void> _acceptTask() async {
-    await FirebaseFirestore.instance.collection('tasks').doc(widget.taskId).update({
-      'status': 'accepted',
-    });
+  void _snack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
-  // FIXED: pehle status 'enroute' set hota hai, phir tracking start hoti hai.
-  // Pehle ulta tha, is liye pehli location likhte hi build() mein
-  // stopIfTaskNoLongerEnroute tracking ko galat stop kar deta tha.
-  // Ab agar tracking start na ho (permission deny etc.) to status wapis
-  // 'assigned' ho jata hai aur member ko message milta hai.
-  Future<void> _markEnroute() async {
-    if (_uid == null) return;
-    final taskRef = FirebaseFirestore.instance.collection('tasks').doc(widget.taskId);
-
-    await taskRef.update({'memberStatuses.$_uid': 'enroute'});
-    final started = await EnrouteTrackingService.instance.startTracking(widget.taskId);
-
-    if (!started) {
-      await taskRef.update({'memberStatuses.$_uid': 'assigned'});
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Location permission/GPS required. Please allow location and turn on GPS.'),
-          ),
-        );
-      }
-    }
-  }
-
-  Future<void> _startTask() async {
-    await EnrouteTrackingService.instance.stopTracking();
-    await FirebaseFirestore.instance.collection('tasks').doc(widget.taskId).update({
-      'memberStatuses.$_uid': 'in_progress',
-    });
-  }
-
-  Future<void> _markCompleted() async {
-    await EnrouteTrackingService.instance.stopTracking();
-    if (_uid != null) {
-      await EnrouteTrackingService.clearMemberLocation(widget.taskId, _uid!);
-    }
-
-    final taskRef = FirebaseFirestore.instance.collection('tasks').doc(widget.taskId);
-    await taskRef.update({'memberStatuses.$_uid': 'completed'});
-
-    final snap = await taskRef.get();
-    final data = snap.data() ?? {};
-    final List assignedIds = List.from(data['assignedMemberIds'] ?? []);
-    final Map memberStatuses = Map<String, dynamic>.from(data['memberStatuses'] ?? {});
-    final bool allDone = assignedIds.isNotEmpty &&
-        assignedIds.every((id) => memberStatuses[id] == 'completed');
-
-    if (allDone) {
-      await EnrouteTrackingService.clearAllMemberLocations(widget.taskId);
-      await taskRef.update({'status': 'resolved'});
-    }
-  }
-
-  Future<void> _showOverrideDialog(String currentStatus) async {
-    const labels = {
-      'enroute': 'Enroute',
-      'in_progress': 'In Progress',
-      'resolved': 'Resolved',
-    };
-
-    final selected = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Override status'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Use this only if the assigned member cannot update their own status (e.g. unreachable). This bypasses the normal flow.',
-              style: TextStyle(fontSize: 12, color: Colors.black54),
-            ),
-            const SizedBox(height: 12),
-            ...labels.keys.where((s) => s != currentStatus).map(
-                  (s) => ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text(labels[s]!),
-                onTap: () => Navigator.pop(ctx, s),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-        ],
-      ),
-    );
-    if (selected == null) return;
-    await _forceUpdateStatus(selected);
-  }
-
-  Future<void> _forceUpdateStatus(String newStatus) async {
-    await FirebaseFirestore.instance.collection('tasks').doc(widget.taskId).update({
-      'status': newStatus,
-      'statusOverriddenBy': _uid,
-      'statusOverriddenAt': FieldValue.serverTimestamp(),
-    });
-    if (newStatus == 'resolved') {
-      await EnrouteTrackingService.clearAllMemberLocations(widget.taskId);
-    }
-  }
-
-  Widget _overrideButton(String status) {
-    return SizedBox(
-      width: double.infinity,
-      child: TextButton.icon(
-        onPressed: () => _showOverrideDialog(status),
-        icon: const Icon(Icons.build_circle_outlined, size: 18, color: Colors.black54),
-        label: const Text('Override status (emergency)',
-            style: TextStyle(color: Colors.black54, fontSize: 12)),
-      ),
-    );
-  }
-
-  // --- STATUS HELPERS (member list aur map dono use karte hain) ---
   String _labelFor(String? statusValue) {
     switch (statusValue) {
       case 'enroute':
@@ -221,6 +164,279 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
     }
   }
 
+  Future<void> _acceptTask() async {
+    try {
+      await FirebaseFirestore.instance.collection('tasks').doc(widget.taskId).update({
+        'status': 'accepted',
+        'acceptedBy': _uid,
+        'acceptedAt': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      _snack('Could not accept task: $e');
+    }
+  }
+
+  // Leader ke paas task reject karne ka koi raasta nahi tha (status list mein
+  // 'rejected' maujood tha lekin kahin set nahi hota tha).
+  Future<void> _rejectTask() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Reject task?'),
+        content: const Text('This task will be closed as rejected for your team.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Reject')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await FirebaseFirestore.instance.collection('tasks').doc(widget.taskId).update({
+        'status': 'rejected',
+        'rejectedBy': _uid,
+        'rejectedAt': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      _snack('Could not reject task: $e');
+    }
+  }
+
+  // Per-member status: har member ka apna `memberStatuses.{uid}`.
+  //
+  // FIXED: pehle tracking start hoti thi aur status baad mein likha jata tha.
+  // Is se (1) pehli location likhte hi build() ka safety-net tracking ko
+  // galat stop kar deta tha, aur (2) permission/GPS na milne par bhi status
+  // 'enroute' ho jata tha. Ab pehle status, phir tracking; tracking start na
+  // ho to status wapis 'assigned' aur member ko message.
+  Future<void> _markEnroute() async {
+    if (_uid == null || _busy) return;
+    setState(() => _busy = true);
+    final taskRef = FirebaseFirestore.instance.collection('tasks').doc(widget.taskId);
+    try {
+      await taskRef.update({'memberStatuses.$_uid': 'enroute'});
+      final started = await EnrouteTrackingService.instance.startTracking(widget.taskId);
+      if (!started) {
+        await taskRef.update({'memberStatuses.$_uid': 'assigned'});
+        _snack('Location permission/GPS required. Please allow location and turn on GPS.');
+      }
+    } catch (e) {
+      _snack('Could not update status: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _startTask() async {
+    if (_uid == null || _busy) return;
+    setState(() => _busy = true);
+    try {
+      // Member pohanch gaya — sirf APNI tracking band hoti hai.
+      await EnrouteTrackingService.instance.stopTracking();
+      await FirebaseFirestore.instance.collection('tasks').doc(widget.taskId).update({
+        'memberStatuses.$_uid': 'in_progress',
+      });
+    } catch (e) {
+      _snack('Could not update status: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  // Transaction: do members ek saath "completed" dabayen to dono ek doosre
+  // ka update nahi dekhte the aur task kabhi 'resolved' nahi hota tha.
+  // Ab status + "sab complete?" check ek hi transaction mein hota hai.
+  Future<bool> _setMemberStatus(String memberUid, String newStatus, {bool override = false}) {
+    final taskRef = FirebaseFirestore.instance.collection('tasks').doc(widget.taskId);
+    return FirebaseFirestore.instance.runTransaction<bool>((tx) async {
+      final snap = await tx.get(taskRef);
+      final data = snap.data() ?? {};
+      final List assignedIds = List.from(data['assignedMemberIds'] ?? []);
+      final Map<String, dynamic> statuses =
+      Map<String, dynamic>.from(data['memberStatuses'] ?? {});
+      statuses[memberUid] = newStatus;
+
+      final bool allDone =
+          assignedIds.isNotEmpty && assignedIds.every((id) => statuses[id] == 'completed');
+
+      final Map<String, dynamic> updates = {'memberStatuses.$memberUid': newStatus};
+      if (allDone) {
+        updates['status'] = 'resolved';
+        updates['resolvedAt'] = FieldValue.serverTimestamp();
+      }
+      if (override) {
+        updates['statusOverriddenBy'] = _uid;
+        updates['statusOverriddenAt'] = FieldValue.serverTimestamp();
+      }
+      tx.update(taskRef, updates);
+      return allDone;
+    });
+  }
+
+  Future<void> _markCompleted() async {
+    if (_uid == null || _busy) return;
+    setState(() => _busy = true);
+    try {
+      await EnrouteTrackingService.instance.stopTracking();
+      await EnrouteTrackingService.clearMemberLocation(widget.taskId, _uid!);
+      final bool allDone = await _setMemberStatus(_uid!, 'completed');
+      if (allDone) {
+        await EnrouteTrackingService.clearAllMemberLocations(widget.taskId);
+      }
+    } catch (e) {
+      _snack('Could not complete task: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  // App band/dobara khulne par member Firestore mein 'enroute' hota hai lekin
+  // tracking process mar chuki hoti hai — location updates band. Yeh tracking
+  // dobara shuru karta hai (sirf ek dafa try karta hai).
+  Future<void> _resumeTracking() async {
+    _resumingTracking = true;
+    try {
+      final ok = await EnrouteTrackingService.instance.startTracking(widget.taskId);
+      if (!ok) {
+        _resumeFailed = true;
+        _snack('Location sharing is off. Allow location and turn on GPS so your team can see you.');
+      }
+    } finally {
+      _resumingTracking = false;
+    }
+  }
+
+  // Leader override ab PER MEMBER hai (pehle task-level status badalta tha,
+  // jis se saare members ke buttons gayab ho jate the aur leader bhi lock ho
+  // jata tha).
+  Future<void> _showOverrideDialog(
+      Map<String, dynamic> taskData, Map<String, dynamic> memberStatuses) async {
+    final List assignedMembers = taskData['assignedMembers'] ?? [];
+
+    final String? picked = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Override status'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              const Text(
+                'Use this only if a member cannot update their own status (e.g. unreachable). Pick the member:',
+                style: TextStyle(fontSize: 12, color: Colors.black54),
+              ),
+              const SizedBox(height: 8),
+              ...assignedMembers.whereType<Map>().map<Widget>((m) {
+                final String? memberUid = (m['uid'] ?? m['id'])?.toString();
+                if (memberUid == null) return const SizedBox.shrink();
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text((m['name'] ?? 'Member').toString()),
+                  subtitle: Text(_labelFor(memberStatuses[memberUid] as String?)),
+                  onTap: () => Navigator.pop(ctx, memberUid),
+                );
+              }),
+              const Divider(),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.done_all, color: kGreen),
+                title: const Text('Resolve entire task'),
+                onTap: () => Navigator.pop(ctx, '__resolve_all__'),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+        ],
+      ),
+    );
+    if (picked == null || !mounted) return;
+
+    if (picked == '__resolve_all__') {
+      await _forceResolveTask();
+      return;
+    }
+
+    const labels = {
+      'assigned': 'Assigned (reset)',
+      'enroute': 'Enroute',
+      'in_progress': 'In Progress',
+      'completed': 'Completed',
+    };
+    final String? current = memberStatuses[picked] as String?;
+    final String? newStatus = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Set member status'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: labels.keys
+              .where((k) => k != (current ?? 'assigned'))
+              .map((k) => ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(labels[k]!),
+            onTap: () => Navigator.pop(ctx, k),
+          ))
+              .toList(),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+        ],
+      ),
+    );
+    if (newStatus == null) return;
+
+    try {
+      final bool allDone = await _setMemberStatus(picked, newStatus, override: true);
+      if (newStatus == 'completed' || newStatus == 'assigned') {
+        await EnrouteTrackingService.clearMemberLocation(widget.taskId, picked);
+      }
+      if (allDone) await EnrouteTrackingService.clearAllMemberLocations(widget.taskId);
+    } catch (e) {
+      _snack('Override failed: $e');
+    }
+  }
+
+  Future<void> _forceResolveTask() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Resolve entire task?'),
+        content: const Text('This closes the task for all assigned members.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Resolve')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await FirebaseFirestore.instance.collection('tasks').doc(widget.taskId).update({
+        'status': 'resolved',
+        'resolvedAt': FieldValue.serverTimestamp(),
+        'statusOverriddenBy': _uid,
+        'statusOverriddenAt': FieldValue.serverTimestamp(),
+      });
+      await EnrouteTrackingService.clearAllMemberLocations(widget.taskId);
+    } catch (e) {
+      _snack('Could not resolve task: $e');
+    }
+  }
+
+  Widget _overrideButton(Map<String, dynamic> taskData, Map<String, dynamic> memberStatuses) {
+    return SizedBox(
+      width: double.infinity,
+      child: TextButton.icon(
+        onPressed: () => _showOverrideDialog(taskData, memberStatuses),
+        icon: const Icon(Icons.build_circle_outlined, size: 18, color: Colors.black54),
+        label: const Text('Override status (emergency)',
+            style: TextStyle(color: Colors.black54, fontSize: 12)),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -245,9 +461,35 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
           final Map<String, dynamic> memberStatuses =
           Map<String, dynamic>.from(taskData['memberStatuses'] ?? {});
 
-          final String myStatus = (_uid != null ? memberStatuses[_uid] : null) ?? 'assigned';
-          EnrouteTrackingService.instance.stopIfTaskNoLongerEnroute(widget.taskId, myStatus);
+          if (_isLeader) _notifyStatusChanges(taskData, memberStatuses);
 
+          // Safety net: tracking sirf tab chalni chahiye jab (a) yeh member is
+          // task par assigned ho, (b) task abhi 'assigned' (active) ho, aur
+          // (c) iska apna status 'enroute' ho. Warna (resolved/rejected/member
+          // hata diya gaya/leader ne override kiya) to tracking band.
+          final List assignedIds = List.from(taskData['assignedMemberIds'] ?? []);
+          final bool amAssigned = _uid != null && assignedIds.contains(_uid);
+          final String myStatus = (_uid != null ? memberStatuses[_uid] : null) ?? 'assigned';
+          final bool trackingAllowed = amAssigned && status == 'assigned' && myStatus == 'enroute';
+          EnrouteTrackingService.instance
+              .stopIfTaskNoLongerEnroute(widget.taskId, trackingAllowed ? 'enroute' : 'stopped');
+
+          // App dobara khuli aur member 'enroute' hai magar tracking nahi chal
+          // rahi => resume.
+          if (trackingAllowed &&
+              !_resumingTracking &&
+              !_resumeFailed &&
+              !EnrouteTrackingService.instance.isTracking) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted && !_resumingTracking) _resumeTracking();
+            });
+          }
+
+          // FIXED: task documents store coordinates as `lat` / `lng`, but this
+          // used to read `latitude` / `longitude` — fields that don't exist on
+          // a task doc — so it always silently fell back to the default point
+          // below and showed the incident in the wrong place. Both spellings
+          // are accepted now.
           final double lat = ((taskData['lat'] ?? taskData['latitude'] ?? 32.4274) as num).toDouble();
           final double lng = ((taskData['lng'] ?? taskData['longitude'] ?? 73.5693) as num).toDouble();
 
@@ -268,20 +510,25 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: Colors.red.shade50,
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Text(
-                            '${(taskData['priority'] ?? 'high').toString().toLowerCase()} priority',
-                            style: TextStyle(color: Colors.red.shade700, fontWeight: FontWeight.bold, fontSize: 11),
-                          ),
-                        ),
+                        Builder(builder: (_) {
+                          // List screen jaisi hi priority aur rang (shared helper).
+                          final String pr = resolvePriority(taskData);
+                          final pc = priorityColors(pr);
+                          return Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: pc[0],
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              '${priorityLabel(pr)} priority',
+                              style: TextStyle(color: pc[1], fontWeight: FontWeight.bold, fontSize: 11),
+                            ),
+                          );
+                        }),
                         const SizedBox(height: 12),
                         Text(
-                          'Emergency: ${taskData['type'] ?? taskData['title'] ?? 'Alert'}',
+                          'Emergency: ${taskType(taskData, fallback: 'Alert')}',
                           style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.red.shade700),
                         ),
                         const SizedBox(height: 12),
@@ -302,7 +549,7 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Text(taskData['address'] ?? 'Address Unavailable', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                                    Text(taskAddress(taskData, fallback: 'Address Unavailable'), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                                     Text('Lat: ${lat.toStringAsFixed(4)}, Lng: ${lng.toStringAsFixed(4)}', style: const TextStyle(color: Colors.black45, fontSize: 11)),
                                   ],
                                 ),
@@ -316,10 +563,7 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
                 ),
 
                 const SizedBox(height: 16),
-                Text(
-                  _isLeader ? 'LIVE TRACKING (TEAM MEMBERS)' : 'LIVE TRACKING (YOU & TASK)',
-                  style: const TextStyle(color: Colors.black45, fontSize: 11, fontWeight: FontWeight.bold),
-                ),
+                Text(_isLeader ? 'LIVE TRACKING (TEAM MEMBERS)' : 'LIVE TRACKING (YOU & TASK)', style: TextStyle(color: Colors.black45, fontSize: 11, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 8),
 
                 Container(
@@ -329,8 +573,26 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
                   child: _buildLiveTrackingMap(taskData, memberStatuses, lat, lng),
                 ),
 
+                if (!_isLeader) ...[
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 44,
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: kGreen),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                      icon: const Icon(Icons.directions, color: kGreen),
+                      label: const Text('Navigate to task location',
+                          style: TextStyle(color: kGreen, fontWeight: FontWeight.bold)),
+                      onPressed: () => _openNavigation(lat, lng),
+                    ),
+                  ),
+                ],
+
                 const SizedBox(height: 16),
-                const Text('ASSIGNED TEAM MEMBERS', style: TextStyle(color: Colors.black45, fontSize: 11, fontWeight: FontWeight.bold)),
+                Text(_isLeader ? 'ASSIGNED TEAM MEMBERS' : 'YOUR STATUS', style: TextStyle(color: Colors.black45, fontSize: 11, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 8),
 
                 _buildMemberList(taskData, memberStatuses),
@@ -350,41 +612,116 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
     );
   }
 
-  // CHANGED: FutureBuilder hata diya. Markers ab seedha (synchronously)
-  // bante hain kyunke icon pehle se cached hai. Camera bhi markers ke
-  // hisaab se khud fit hota hai.
+  // Kaun kaun si positions map par dikhani hain:
+  //  - Leader: apni team ke SAB assigned members (jin ki location Firestore mein hai)
+  //  - Member: sirf APNI (local live GPS, warna Firestore wali)
+  Map<String, LatLng> _visiblePositions(Map<String, dynamic> taskData) {
+    final Map<String, dynamic> memberLocations =
+    Map<String, dynamic>.from(taskData['memberLocations'] ?? {});
+    final List assignedIds = taskData['assignedMemberIds'] ?? [];
+    final Map<String, LatLng> out = {};
+
+    LatLng? fromDoc(String uid) {
+      final loc = memberLocations[uid];
+      if (loc is Map && loc['lat'] is num && loc['lng'] is num) {
+        return LatLng((loc['lat'] as num).toDouble(), (loc['lng'] as num).toDouble());
+      }
+      return null;
+    }
+
+    if (_isLeader) {
+      for (final id in assignedIds) {
+        final p = fromDoc(id.toString());
+        if (p != null) out[id.toString()] = p;
+      }
+    } else if (_uid != null) {
+      final p = _myPos ?? fromDoc(_uid!);
+      if (p != null) out[_uid!] = p;
+    }
+    return out;
+  }
+
   Widget _buildLiveTrackingMap(
       Map<String, dynamic> taskData,
       Map<String, dynamic> memberStatuses,
       double lat,
       double lng,
       ) {
-    final markers = _buildMarkers(taskData, memberStatuses, lat, lng);
-    final points = markers.map((m) => m.position).toList();
+    final taskPoint = LatLng(lat, lng);
+    final positions = _visiblePositions(taskData);
+    final markers = _buildMarkers(taskData, memberStatuses, positions, lat, lng);
 
-    // Camera sirf tab dobara fit hota hai jab markers ki tadaad badle
-    // (taake user map ko pan kare to camera wapis na kheenche).
+    // Member/leader se task tak dashed line (seedhi lakeer, road route nahi).
+    final Set<Polyline> polylines = {};
+    positions.forEach((uid, pos) {
+      polylines.add(Polyline(
+        polylineId: PolylineId('route_$uid'),
+        points: [pos, taskPoint],
+        color: Colors.blue.shade700,
+        width: 3,
+        patterns: [PatternItem.dash(18), PatternItem.gap(10)],
+      ));
+    });
+
+    final points = <LatLng>[taskPoint, ...positions.values];
+
+    // Camera sirf tab dobara fit hota hai jab points ki tadaad badle
+    // (taake user pan kare to wapis na kheenche).
     if (points.length != _lastFitCount) {
       _lastFitCount = points.length;
       WidgetsBinding.instance.addPostFrameCallback((_) => _fitCamera(points));
     }
 
-    return GoogleMap(
-      initialCameraPosition: CameraPosition(target: LatLng(lat, lng), zoom: 13),
-      markers: markers,
-      onMapCreated: (controller) {
-        _mapController = controller;
-        _fitCamera(points);
-      },
-      myLocationButtonEnabled: false,
-      zoomControlsEnabled: true,
+    // Member ke liye: task se kitna door hai.
+    String? distanceText;
+    if (!_isLeader && _uid != null && positions[_uid] != null) {
+      final meters = Geolocator.distanceBetween(
+          positions[_uid]!.latitude, positions[_uid]!.longitude, lat, lng);
+      distanceText = meters >= 1000
+          ? '${(meters / 1000).toStringAsFixed(1)} km to task'
+          : '${meters.round()} m to task';
+    }
+
+    return Stack(
+      children: [
+        GoogleMap(
+          initialCameraPosition: CameraPosition(target: taskPoint, zoom: 13),
+          markers: markers,
+          polylines: polylines,
+          // Map scrollable page ke andar hai — iske baghair map ko ungli se
+          // hilane par poora page scroll hota tha, map pan nahi hota tha.
+          gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
+            Factory<OneSequenceGestureRecognizer>(() => EagerGestureRecognizer()),
+          },
+          onMapCreated: (controller) {
+            _mapController = controller;
+            _fitCamera(points);
+          },
+          myLocationButtonEnabled: false,
+          zoomControlsEnabled: true,
+        ),
+        if (distanceText != null)
+          Positioned(
+            top: 8,
+            left: 8,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.15), blurRadius: 4)],
+              ),
+              child: Text(distanceText,
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: kGreen)),
+            ),
+          ),
+      ],
     );
   }
 
   Future<void> _fitCamera(List<LatLng> points) async {
     final c = _mapController;
     if (c == null || points.isEmpty) return;
-
     try {
       double minLat = points.first.latitude, maxLat = points.first.latitude;
       double minLng = points.first.longitude, maxLng = points.first.longitude;
@@ -394,19 +731,14 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
         if (p.longitude < minLng) minLng = p.longitude;
         if (p.longitude > maxLng) maxLng = p.longitude;
       }
-
       if (minLat == maxLat && minLng == maxLng) {
         await c.animateCamera(CameraUpdate.newLatLngZoom(points.first, 15));
         return;
       }
-
       await c.animateCamera(
         CameraUpdate.newLatLngBounds(
-          LatLngBounds(
-            southwest: LatLng(minLat, minLng),
-            northeast: LatLng(maxLat, maxLng),
-          ),
-          60,
+          LatLngBounds(southwest: LatLng(minLat, minLng), northeast: LatLng(maxLat, maxLng)),
+          70,
         ),
       );
     } catch (e) {
@@ -414,75 +746,98 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
     }
   }
 
-  // ROLE-BASED markers:
-  //  - Leader: apni team ke SAB assigned members (+ task pin)
-  //  - Member: sirf APNA marker (+ task pin)
+  double _hueForStatus(String? st) {
+    switch (st) {
+      case 'enroute':
+        return BitmapDescriptor.hueOrange;
+      case 'in_progress':
+        return BitmapDescriptor.hueAzure;
+      case 'completed':
+        return BitmapDescriptor.hueGreen;
+      default:
+        return BitmapDescriptor.hueViolet;
+    }
+  }
+
   Set<Marker> _buildMarkers(
       Map<String, dynamic> taskData,
       Map<String, dynamic> memberStatuses,
+      Map<String, LatLng> positions,
       double lat,
       double lng,
       ) {
     final Set<Marker> markers = {};
-    final Map<String, dynamic> memberLocations =
-    Map<String, dynamic>.from(taskData['memberLocations'] ?? {});
     final List assignedMembers = taskData['assignedMembers'] ?? [];
-    final List assignedIds = taskData['assignedMemberIds'] ?? [];
 
+    // Alert / task ki location
     if (_showTaskMarker) {
-      markers.add(
-        Marker(
-          markerId: const MarkerId('task_location'),
-          position: LatLng(lat, lng),
-          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
-          infoWindow: const InfoWindow(title: 'Task Location'),
+      markers.add(Marker(
+        markerId: const MarkerId('task_location'),
+        position: LatLng(lat, lng),
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+        infoWindow: InfoWindow(
+          title: 'Alert: ${taskType(taskData)}',
+          snippet: taskAddress(taskData, fallback: ''),
         ),
-      );
+      ));
     }
 
-    // Kaun kaun se uids ka marker dikhana hai
-    final List<String> visibleUids = _isLeader
-        ? assignedIds.map((e) => e.toString()).toList()
-        : (_uid != null ? [_uid!] : <String>[]);
+    // Members: "Naam · Status" wale label marker (live update hote hain)
+    positions.forEach((uid, pos) {
+      final String? st = memberStatuses[uid] as String?;
+      final String statusLabel = _labelFor(st);
 
-    for (final uid in visibleUids) {
-      final locData = memberLocations[uid];
-      if (locData is! Map || locData['lat'] == null || locData['lng'] == null) continue;
-
-      final double memberLat = (locData['lat'] as num).toDouble();
-      final double memberLng = (locData['lng'] as num).toDouble();
-
-      String memberName = uid == _uid ? 'You' : 'Team Member';
+      String name = uid == _uid ? 'You' : 'Member';
       if (uid != _uid) {
         for (final m in assignedMembers) {
           if (m is Map && (m['uid'] == uid || m['id'] == uid)) {
-            memberName = (m['name'] ?? 'Team Member').toString();
+            name = (m['name'] ?? 'Member').toString();
             break;
           }
         }
       }
 
-      markers.add(
-        Marker(
-          markerId: MarkerId('member_$uid'),
-          position: LatLng(memberLat, memberLng),
-          icon: _memberIcon ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
-          anchor: const Offset(0.5, 0.5),
-          infoWindow: InfoWindow(
-            title: memberName,
-            snippet: _labelFor(memberStatuses[uid] as String?),
-          ),
-        ),
-      );
-    }
+      final String text = '$name · $statusLabel';
+      final String key = 'task_$text';
+      final BitmapDescriptor? labelIcon = LabelMarkerCache.lookup(key);
+      if (labelIcon == null) {
+        LabelMarkerCache.prepare(key, text, _colorFor(st), () {
+          if (mounted) setState(() {});
+        });
+      }
+
+      markers.add(Marker(
+        markerId: MarkerId('member_$uid'),
+        position: pos,
+        // label tayar hone tak rang wala default marker
+        icon: labelIcon ?? BitmapDescriptor.defaultMarkerWithHue(_hueForStatus(st)),
+        infoWindow: InfoWindow(title: name, snippet: statusLabel),
+      ));
+    });
 
     return markers;
   }
 
+  // CHANGED: now also shows each member's individual status (from
+  // `memberStatuses`) next to their name, instead of just a plain name
+  // list — this is the "leader can see each member's status
+  // individually" part of the fix.
   Widget _buildMemberList(Map<String, dynamic> taskData, Map<String, dynamic> memberStatuses) {
-    final List assignedMembers = taskData['assignedMembers'] ?? [];
+    List assignedMembers = taskData['assignedMembers'] ?? [];
+
+    // PRIVACY: member ko sirf APNA naam/status dikhta hai, doosre assigned
+    // members ka nahi. (Leader ko sab ka.)
+    if (!_isLeader) {
+      assignedMembers = assignedMembers
+          .where((m) => m is Map && (m['uid'] ?? m['id']) == _uid)
+          .toList();
+    }
+
     if (assignedMembers.isEmpty) {
-      return const Text('No team members assigned yet.', style: TextStyle(color: Colors.black45));
+      return Text(
+        _isLeader ? 'No team members assigned yet.' : 'You are not assigned to this task.',
+        style: const TextStyle(color: Colors.black45),
+      );
     }
 
     return Column(
@@ -529,13 +884,41 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
     );
   }
 
+  // CHANGED: once the task has been assigned to members, this now shows
+  // an aggregate summary built from `memberStatuses` (e.g. "1 of 3
+  // members completed") instead of one generic sentence that implied a
+  // single assigned member.
   Widget _buildLiveStatusCard(
       String status, Map<String, dynamic> taskData, Map<String, dynamic> memberStatuses) {
     String message = '';
     Color cardColor = Colors.white;
     Color textColor = Colors.black87;
 
-    if (status == 'assigned') {
+    if (status == 'assigned' && !_isLeader) {
+      // Member ko team ka hisaab (jaise "1 of 3 completed") nahi dikhta —
+      // sirf apni halat.
+      final String mine = (_uid != null ? memberStatuses[_uid] : null) as String? ?? 'assigned';
+      switch (mine) {
+        case 'enroute':
+          message = 'You are on your way to the task location';
+          cardColor = Colors.orange.shade50;
+          textColor = Colors.orange.shade900;
+          break;
+        case 'in_progress':
+          message = 'You are working on this task';
+          cardColor = Colors.blue.shade50;
+          textColor = Colors.blue.shade900;
+          break;
+        case 'completed':
+          message = "You've completed your part of this task";
+          cardColor = Colors.green.shade50;
+          textColor = kGreen;
+          break;
+        default:
+          message = 'Waiting for you to start';
+          textColor = Colors.black54;
+      }
+    } else if (status == 'assigned') {
       final List assignedIds = List.from(taskData['assignedMemberIds'] ?? []);
       final int total = assignedIds.length;
       final int completed = assignedIds.where((id) => memberStatuses[id] == 'completed').length;
@@ -604,6 +987,11 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
     );
   }
 
+  // CHANGED: the member-facing branch now reads `myStatus`
+  // (this member's own entry in `memberStatuses`) instead of the
+  // shared task-level `status` — so each assigned member sees the
+  // button matching THEIR OWN progress, independent of what other
+  // members assigned to the same task are doing.
   Widget _buildActionButtons(
       String status,
       Map<String, dynamic> taskData,
@@ -612,14 +1000,31 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
       ) {
     if (_isLeader) {
       if (status == 'dispatched') {
-        return SizedBox(
-          width: double.infinity,
-          height: 48,
-          child: ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: kGreen, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
-            onPressed: _acceptTask,
-            child: const Text('Accept Task', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-          ),
+        return Column(
+          children: [
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: kGreen, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+                onPressed: _acceptTask,
+                child: const Text('Accept Task', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              ),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              height: 44,
+              child: OutlinedButton(
+                style: OutlinedButton.styleFrom(
+                  side: BorderSide(color: Colors.red.shade300),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+                onPressed: _rejectTask,
+                child: Text('Reject Task', style: TextStyle(color: Colors.red.shade700, fontWeight: FontWeight.bold)),
+              ),
+            ),
+          ],
         );
       }
       if (status == 'accepted' || status == 'assigned') {
@@ -653,7 +1058,7 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
             ),
             if (status == 'assigned') ...[
               const SizedBox(height: 8),
-              _overrideButton(status),
+              _overrideButton(taskData, memberStatuses),
             ],
           ],
         );
@@ -669,7 +1074,7 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
               style: ElevatedButton.styleFrom(backgroundColor: kGreen, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
               icon: const Icon(Icons.navigation, color: Colors.white),
               label: const Text('Mark as Enroute', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-              onPressed: _markEnroute,
+              onPressed: _busy ? null : _markEnroute,
             ),
           );
         }
@@ -681,7 +1086,7 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
               style: ElevatedButton.styleFrom(backgroundColor: kGreen, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
               icon: const Icon(Icons.location_on, color: Colors.white),
               label: const Text("I've Arrived – Start Task", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-              onPressed: _startTask,
+              onPressed: _busy ? null : _startTask,
             ),
           );
         }
@@ -693,7 +1098,7 @@ class _ViewTaskScreenState extends State<ViewTaskScreen> {
               style: ElevatedButton.styleFrom(backgroundColor: Colors.blue.shade800, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
               icon: const Icon(Icons.check_circle, color: Colors.white),
               label: const Text('Mark Task Completed', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-              onPressed: _markCompleted,
+              onPressed: _busy ? null : _markCompleted,
             ),
           );
         }

@@ -1,3 +1,4 @@
+import 'package:smartdisaster/services/fcm_token_service.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -59,7 +60,7 @@ class _PendingApprovalScreenState extends State<PendingApprovalScreen> {
 
       setState(() => _status = status);
 
-      if (status == 'approved') {
+      if (status == 'approved' || status == 'active') {
         _isProcessing = true;
         await _goToDashboard(currentUser.uid, data!);
       } else if (status == 'rejected') {
@@ -86,6 +87,10 @@ class _PendingApprovalScreenState extends State<PendingApprovalScreen> {
       'isOnline': true,
       'lastSeenAt': FieldValue.serverTimestamp(),
     });
+
+    // first approved login for this leader — start receiving notifications
+    await FcmTokenService.saveFCMToken(uid, collection: 'rescueTeamUsers');
+    FcmTokenService.listenForTokenRefresh(uid, collection: 'rescueTeamUsers');
 
     if (!mounted) return;
 

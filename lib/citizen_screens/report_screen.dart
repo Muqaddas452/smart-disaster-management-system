@@ -1,5 +1,7 @@
 // lib/screens/report_screen.dart
 // Manual Emergency Reporting Screen — Online/Offline support with Auto Sync
+// lib/screens/report_screen.dart
+// Manual Emergency Reporting Screen — Online/Offline support with Auto Sync
 
 import 'package:flutter/material.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -227,7 +229,15 @@ class _ReportScreenState extends State<ReportScreen> {
       if (isOnline) {
         final uid = FirebaseAuth.instance.currentUser?.uid ?? 'anonymous';
 
-        await FirebaseFirestore.instance.collection('manual_reports').add({
+        // Fixed document id (user + report ka waqt): ek hi report dobara/tin baar
+        // likhi bhi jaye to naya document nahi banta, wohi overwrite hota hai.
+        final String reportDocId = ReportSyncService.reportDocId(
+            uid, reportData['timestamp'] as String);
+
+        await FirebaseFirestore.instance
+            .collection('manual_reports')
+            .doc(reportDocId)
+            .set({
           'name': reportData['name'],
           'phone': reportData['phone'],
           'incident_type': reportData['emergencyType'],

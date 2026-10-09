@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:smartdisaster/services/fcm_token_service.dart';
 import 'rescue_member_personal_detail_screen.dart';
 import 'package:smartdisaster/rescue_team_screens/team_leader/rescue_leader_settings_screen.dart';
 import 'package:smartdisaster/citizen_screens/feedback_screen.dart';
@@ -233,6 +234,7 @@ class ViewMemberProfileScreen extends StatelessWidget {
             'lastSeenAt': FieldValue.serverTimestamp(),
           });
         } catch (_) {}
+        await FcmTokenService.clearFCMToken(uid, collection: 'rescueTeamUsers');
       }
       await FirebaseAuth.instance.signOut();
       if (context.mounted) {

@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'view_task_screen.dart';
 import 'add_task_screen.dart';
+import 'package:smartdisaster/utils/priority_helper.dart';
 import 'package:smartdisaster/database/rescue_dao.dart';
 import 'package:smartdisaster/database/db_Helper.dart';
 
@@ -35,17 +36,25 @@ class _TasksListScreenState extends State<TasksListScreen> {
       return;
     }
 
-    final doc = await FirebaseFirestore.instance
-        .collection('rescueTeamUsers')
-        .doc(uid)
-        .get(const GetOptions(source: Source.cache)); // Try local cache first for offline resilience
-
+    // FIXED: get(Source.cache) cache mein doc na ho to EXCEPTION throw karta
+    // hai (non-existent doc nahi), jis se yeh function beech mein mar jata tha
+    // aur Tasks screen hamesha spinner dikhati rehti thi (nayi install / login
+    // ke baad pehli dafa). Ab cache fail ho to server se parhte hain.
     Map<String, dynamic> data = {};
-    if (doc.exists) {
-      data = doc.data() ?? {};
-    } else {
-      final serverDoc = await FirebaseFirestore.instance.collection('rescueTeamUsers').doc(uid).get();
-      data = serverDoc.data() ?? {};
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('rescueTeamUsers')
+          .doc(uid)
+          .get(const GetOptions(source: Source.cache));
+      if (doc.exists) data = doc.data() ?? {};
+    } catch (_) {}
+
+    if (data.isEmpty) {
+      try {
+        final serverDoc =
+        await FirebaseFirestore.instance.collection('rescueTeamUsers').doc(uid).get();
+        data = serverDoc.data() ?? {};
+      } catch (_) {}
     }
 
     _teamId = data['teamId'];
@@ -176,18 +185,13 @@ class _TasksListScreenState extends State<TasksListScreen> {
   }
 
   Widget _taskCard(BuildContext context, String taskId, Map<String, dynamic> data) {
-    final String type = data['type'] ?? 'Task';
-    final String priority = (data['priority'] ?? 'medium').toString().toLowerCase();
-    final String address = data['address'] ?? 'Address not available';
+    final String type = taskType(data);
+    final String priority = resolvePriority(data);
+    final String address = taskAddress(data);
     final String description = data['description'] ?? '';
     final String status = data['status'] ?? 'dispatched';
 
-    final priorityColors = {
-      'high': const [Color(0xFFFCEBEB), Color(0xFF791F1F)],
-      'medium': const [Color(0xFFFAEEDA), Color(0xFF633806)],
-      'low': const [Color(0xFFE6F1FB), Color(0xFF042C53)],
-    };
-    final colors = priorityColors[priority] ?? priorityColors['medium']!;
+    final colors = priorityColors(priority);
 
     String timeAgo = '-';
     final createdAt = data['createdAt'];
@@ -219,7 +223,7 @@ class _TasksListScreenState extends State<TasksListScreen> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(color: colors[0], borderRadius: BorderRadius.circular(20)),
-                child: Text('${priority[0].toUpperCase()}${priority.substring(1)} priority',
+                child: Text('${priorityLabel(priority)} priority',
                     style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: colors[1])),
               ),
               Text(timeAgo, style: const TextStyle(fontSize: 11, color: Colors.black38)),

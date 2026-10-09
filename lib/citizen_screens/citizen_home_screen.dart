@@ -1,3 +1,7 @@
+import 'dart:async';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:smartdisaster/citizen_screens/notification_settings_screen.dart';
+import 'package:smartdisaster/services/report_sync_service.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -5,6 +9,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:smartdisaster/services/map_service.dart';
+import 'package:smartdisaster/widgets/notification_bell.dart';
 import 'profile_screen.dart';
 import 'edit_emergency_contacts.dart';
 import 'edit_personal_details.dart';
@@ -50,12 +55,28 @@ class _HomeScreenState extends State<HomeScreen> {
 
   double? _userLat;
   double? _userLng;
+  StreamSubscription<List<ConnectivityResult>>? _syncSub;
 
   @override
   void initState() {
     super.initState();
     _getCurrentLocation();
     _saveFcmToken();
+
+    // Offline reports used to sync only while the Report screen was open.
+    // Now they sync on app open and whenever internet comes back.
+    ReportSyncService.syncPendingReports();
+    _syncSub = ReportSyncService.connectivityStream.listen((results) {
+      final online =
+          results.isNotEmpty && !results.contains(ConnectivityResult.none);
+      if (online) ReportSyncService.syncPendingReports();
+    });
+  }
+
+  @override
+  void dispose() {
+    _syncSub?.cancel();
+    super.dispose();
   }
 
   Future<void> _saveFcmToken() async {
@@ -469,7 +490,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 }
-
 class _AppTopBar extends StatelessWidget {
   const _AppTopBar();
 
@@ -478,24 +498,36 @@ class _AppTopBar extends StatelessWidget {
     return Container(
       color: AppColors.primary,
       padding: EdgeInsets.only(
-        top: MediaQuery.of(context).padding.top + 12,
-        bottom: 14,
+        top: MediaQuery.of(context).padding.top + 10,
+        bottom: 10,
         left: 16,
-        right: 16,
+        right: 14,
       ),
-      child: const Row(
-        mainAxisAlignment: MainAxisAlignment.center,
+      child: Row(
         children: [
-          Icon(Icons.security, color: Colors.white, size: 20),
-          SizedBox(width: 8),
-          Text(
-            'Smart Disaster Management System',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 15,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.2,
+          const Expanded(
+            child: Text(
+              'Smart Disaster Management System',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.2,
+              ),
             ),
+          ),
+          const SizedBox(width: 8),
+          NotificationBell(
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const NotificationSettingsScreen(),
+                ),
+              );
+            },
           ),
         ],
       ),

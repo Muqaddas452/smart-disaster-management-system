@@ -14,6 +14,74 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:smartdisaster/database/db_helper.dart';
 import 'package:smartdisaster/database/citizen_dao.dart';
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+// Firestore mein lat/lng number ya String dono ho sakte hain — safe parse.
+// (AlertModel ki lat/lng alert details screen ke liye hain; matching mein
+// ab use nahi hoti.)
+double? _toDouble(dynamic value) {
+  if (value == null) return null;
+  if (value is num) return value.toDouble();
+  if (value is String) return double.tryParse(value.trim());
+  return null;
+}
+
+// Pehli non-empty string wapas karta hai. `??` sirf null check karta hai,
+// empty string "" pe agli field pe nahi jata — isliye ye helper.
+String _firstNonEmpty(List<dynamic> values) {
+  for (final v in values) {
+    final s = (v ?? '').toString().trim();
+    if (s.isNotEmpty) return s;
+  }
+  return '';
+}
+
+// Text ko normalize: lowercase, symbols hata kar single spaces (Urdu letters
+// bhi preserve hote hain).
+String _normalize(String input) {
+  return input
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9\u0600-\u06FF]+'), ' ')
+      .trim();
+}
+
+// Alert ki city field ko cities mein todta hai (comma, "and", "&", "/" se).
+// Har part normalized wapas aata hai.
+List<String> _splitCities(String raw) {
+  return raw
+      .split(RegExp(r',|/|&|\||;|\band\b', caseSensitive: false))
+      .map(_normalize)
+      .where((s) => s.length >= 3)
+      .toList();
+}
+
+// Citizen ke address se uski city nikalta hai.
+// `candidates` = openweathermap ke saare districts + alerts ki cities.
+// Jo candidate address mein POORE naam ke saath SAB SE PEHLE aaye wahi
+// citizen ki city hai (address aam taur par chhoti jagah -> bari jagah
+// likha hota hai, jaise "Phalia, Mandi Bahauddin").
+// Barabar position pe lamba naam jeetta hai ("Dera Ghazi Khan" > "Dera Ghazi").
+// Kuch na mile to null.
+String? _resolveCitizenCity(String address, Iterable<String> candidates) {
+  final paddedAddress = ' ${_normalize(address)} ';
+  String? best;
+  int bestIndex = -1;
+
+  for (final candidate in candidates) {
+    final n = _normalize(candidate);
+    if (n.length < 3) continue;
+    final idx = paddedAddress.indexOf(' $n ');
+    if (idx == -1) continue;
+    if (best == null ||
+        idx < bestIndex ||
+        (idx == bestIndex && n.length > best.length)) {
+      best = n;
+      bestIndex = idx;
+    }
+  }
+  return best;
+}
+
 // ── Alert Model for Broadcast Alerts ──────────────────────────────────────────
 class AlertModel {
   final String docId;
@@ -56,9 +124,9 @@ class AlertModel {
       message: data["message"] ?? "Emergency alert issued.",
       title: data["title"] ?? "Emergency Alert",
       time: parsedTime,
-      //convert lat & lon into double from firestore
-      lat: (data["lat"] ?? data["latitude"])?.toDouble(),
-      lng: (data["lng"] ?? data["longitude"])?.toDouble(),
+      //convert lat & lon into double from firestore (number ya String dono safe)
+      lat: _toDouble(data["lat"] ?? data["latitude"]),
+      lng: _toDouble(data["lng"] ?? data["longitude"]),
     );
   }
 
@@ -119,6 +187,13 @@ class AlertModel {
   }
 }
 
+// Citizen ka profile doc + openweathermap ke districts (ek saath load hote hain)
+class _ProfileData {
+  final DocumentSnapshot doc;
+  final List<String> districts;
+  const _ProfileData(this.doc, this.districts);
+}
+
 // ── Alerts Screen ─────────────────────────────────────────────────────────────
 class AlertsScreen extends StatefulWidget {
   const AlertsScreen({super.key});
@@ -131,13 +206,48 @@ class _AlertsScreenState extends State<AlertsScreen> {
   static const Color _primaryGreen = Color(0xFF1B5E20);
   static const Color _bgColor = Color(0xFFF0F2F5);
 
+  // Districts ki collection ka naam aur us mein field ka naam.
+  // Agar tumhari collection/field ka naam alag hai to yahan badlo.
+  static const String _districtCollection = 'openweathermap';
+  static const String _districtField = 'district';
+
   bool _isOffline = false;
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
+
+  // Profile + districts sirf EK baar load hote hain.
+  Future<_ProfileData>? _profileFuture;
+
+  // Matched alerts ka stream bhi EK baar banta hai. Filtering aur offline
+  // cache yahin hota hai, build() ke andar nahi.
+  Stream<List<AlertModel>>? _alertsStream;
 
   @override
   void initState() {
     super.initState();
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    if (uid.isNotEmpty) {
+      _profileFuture = _loadProfileData(uid);
+    }
     _initConnectivity();
+  }
+
+  Future<_ProfileData> _loadProfileData(String uid) async {
+    final doc = await FirebaseFirestore.instance.collection('citizens').doc(uid).get();
+
+    // Districts ki list — fail ho jaye to khali list, tab bhi alerts ki
+    // apni cities se matching chalti rahegi.
+    List<String> districts = [];
+    try {
+      final snap = await FirebaseFirestore.instance.collection(_districtCollection).get();
+      districts = snap.docs
+          .map((d) => (d.data()[_districtField] ?? '').toString().trim())
+          .where((s) => s.isNotEmpty)
+          .toList();
+    } catch (e) {
+      debugPrint('[Alerts] districts load nahi huay: $e');
+    }
+
+    return _ProfileData(doc, districts);
   }
 
   Future<void> _initConnectivity() async {
@@ -158,49 +268,98 @@ class _AlertsScreenState extends State<AlertsScreen> {
     super.dispose();
   }
 
-  // Same tokenize + intersect keyword match used on the home screen's
-  // live alert banner — used offline to approximate the online
-  // exact-city filter against whatever address is in the cached profile.
-  bool _keywordMatch(String targetArea, String citizenAddress) {
-    List<String> tokenize(String input) {
-      final normalized = input.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), ' ');
-      return normalized.split(' ').where((w) => w.trim().length >= 3).toList();
-    }
+  // ── MAIN MATCH LOGIC (sirf city) ──────────────────────────────────
+  // Alert citizen ke liye hai agar:
+  //  1) alert mein city likhi hi nahi  -> sab ke liye
+  //  2) alert ki koi bhi city == citizen ki city
+  // Citizen ki city na mile (address mein koi known city nahi) to
+  // city wale alerts nahi dikhte.
+  bool _isAlertForCitizen(AlertModel alert, String? citizenCity) {
+    final alertCities = _splitCities(alert.district);
+    if (alertCities.isEmpty) return true;
+    if (citizenCity == null) return false;
+    return alertCities.contains(citizenCity);
+  }
 
-    final targetTokens = tokenize(targetArea).toSet();
-    final addressTokens = tokenize(citizenAddress).toSet();
-    return targetTokens.intersection(addressTokens).isNotEmpty;
+  // Alerts ka stream: filter + offline cache har snapshot pe sirf ek baar.
+  Stream<List<AlertModel>> _buildAlertsStream({
+    required String citizenAddress,
+    required List<String> districts,
+  }) {
+    return FirebaseFirestore.instance
+        .collection("broadcast_alerts")
+        .orderBy("createdAt", descending: true)
+        .snapshots()
+        .map((snapshot) {
+      final allAlerts = snapshot.docs
+          .map((d) => AlertModel.fromFirestore(d.id, d.data() as Map<String, dynamic>))
+          .toList();
+
+      // Citizen ki city: districts + alerts ki cities mein se jo address
+      // mein sab se pehle aaye.
+      final candidates = <String>[...districts];
+      for (final a in allAlerts) {
+        candidates.addAll(_splitCities(a.district));
+      }
+      final String? citizenCity = _resolveCitizenCity(citizenAddress, candidates);
+
+      // Debug: console mein dekh sakti ho ke city kya detect hui
+      debugPrint('[Alerts] address="$citizenAddress" -> city="$citizenCity"');
+
+      final matchedAlerts =
+      allAlerts.where((alert) => _isAlertForCitizen(alert, citizenCity)).toList();
+
+      // Cache silently for offline use — sirf wahi alerts jo is citizen
+      // ke liye match hue, taake offline mein bhi sirf uske alerts dikhen.
+      final cachePayload = matchedAlerts
+          .map((a) => {
+        'docId': a.docId,
+        'disasterType': a.type,
+        'priority': a.risk,
+        'targetArea': a.district,
+        'message': a.message,
+        'createdAt': a.time.toIso8601String(),
+      })
+          .toList();
+      CitizenDao.cacheAlerts(cachePayload);
+
+      return matchedAlerts;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    String currentUserId = FirebaseAuth.instance.currentUser?.uid ?? '';
-
     return Scaffold(
       backgroundColor: _bgColor,
       appBar: _buildAppBar(context),
-      body: _isOffline
-          ? _buildOfflineBody(context, currentUserId)
-          : _buildOnlineBody(context, currentUserId),
+      body: _isOffline ? _buildOfflineBody(context) : _buildOnlineBody(context),
     );
   }
 
-  Widget _buildOnlineBody(BuildContext context, String currentUserId) {
-    return FutureBuilder<DocumentSnapshot>(
-      future: FirebaseFirestore.instance.collection('citizens').doc(currentUserId).get(),
+  Widget _buildOnlineBody(BuildContext context) {
+    final profileFuture = _profileFuture;
+    if (profileFuture == null) {
+      return const Center(child: Text("User profile not found."));
+    }
+
+    return FutureBuilder<_ProfileData>(
+      future: profileFuture,
       builder: (context, userSnapshot) {
         if (userSnapshot.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator(color: _primaryGreen));
         }
 
-        if (!userSnapshot.hasData || !userSnapshot.data!.exists) {
+        if (!userSnapshot.hasData || !userSnapshot.data!.doc.exists) {
           return const Center(child: Text("User profile not found."));
         }
 
-        var userData = userSnapshot.data!.data() as Map<String, dynamic>;
+        final profile = userSnapshot.data!;
+        var userData = profile.doc.data() as Map<String, dynamic>;
 
-        // Citizen ka poora address nikalna (address, location, ya city field se)
-        String citizenAddress = (userData['address'] ?? userData['location'] ?? userData['city'] ?? '').toString().trim();
+        // Citizen ka address (address, location, ya city field se — jo pehli
+        // non-empty ho)
+        final String citizenAddress =
+        _firstNonEmpty([userData['address'], userData['location'], userData['city']]);
 
         if (citizenAddress.isEmpty) {
           return const Center(
@@ -215,12 +374,13 @@ class _AlertsScreenState extends State<AlertsScreen> {
           );
         }
 
-        // Ab hum broadcast_alerts se saare active alerts fetch karenge aur app mein filter karenge
-        return StreamBuilder<QuerySnapshot>(
-          stream: FirebaseFirestore.instance
-              .collection("broadcast_alerts")
-              .orderBy("createdAt", descending: true)
-              .snapshots(),
+        _alertsStream ??= _buildAlertsStream(
+          citizenAddress: citizenAddress,
+          districts: profile.districts,
+        );
+
+        return StreamBuilder<List<AlertModel>>(
+          stream: _alertsStream,
           builder: (context, alertSnapshot) {
             if (alertSnapshot.hasError) {
               return Center(child: Text("Error: ${alertSnapshot.error}"));
@@ -229,50 +389,20 @@ class _AlertsScreenState extends State<AlertsScreen> {
               return const Center(child: CircularProgressIndicator(color: _primaryGreen));
             }
 
-            final docs = alertSnapshot.data!.docs;
-            if (docs.isEmpty) {
-              return const Center(
-                child: Text(
-                  "No active alerts right now.",
-                  style: TextStyle(fontSize: 16, color: Colors.grey),
-                ),
-              );
-            }
-
-            // All alerts convert to model
-            final allAlerts = docs
-                .map((d) => AlertModel.fromFirestore(d.id, d.data() as Map<String, dynamic>))
-                .toList();
-
-            // KEYWORD MATCH FILTER: Sirf wo alerts filter honge jinka targetArea/city citizen ke poore address se match karega
-            final matchedAlerts = allAlerts.where((alert) {
-              final targetArea = alert.district; // Alert wala city/district (jaise "Mandi Bahauddin")
-              if (targetArea.isEmpty) return true; // Agar alert mein district blank ho to sab ko dikhaye
-              return _keywordMatch(targetArea, citizenAddress);
-            }).toList();
+            final matchedAlerts = alertSnapshot.data ?? [];
 
             if (matchedAlerts.isEmpty) {
               return Center(
-                child: Text(
-                  "No active alerts for your area ($citizenAddress).",
-                  style: const TextStyle(fontSize: 15, color: Colors.grey),
-                  textAlign: TextAlign.center,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Text(
+                    "No active alerts for your area ($citizenAddress).",
+                    style: const TextStyle(fontSize: 15, color: Colors.grey),
+                    textAlign: TextAlign.center,
+                  ),
                 ),
               );
             }
-
-            // Cache silently for offline use
-            final cachePayload = matchedAlerts
-                .map((a) => {
-              'docId': a.docId,
-              'disasterType': a.type,
-              'priority': a.risk,
-              'targetArea': a.district,
-              'message': a.message,
-              'createdAt': a.time.toIso8601String(),
-            })
-                .toList();
-            CitizenDao.cacheAlerts(cachePayload);
 
             return ListView.separated(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
@@ -296,81 +426,67 @@ class _AlertsScreenState extends State<AlertsScreen> {
       },
     );
   }
-  Widget _buildOfflineBody(BuildContext context, String currentUserId) {
-    return FutureBuilder<Map<String, dynamic>?>(
-      future: CitizenDao.getCachedProfile(currentUserId),
-      builder: (context, profileSnap) {
-        final cachedAddress = (profileSnap.data?['address'] as String?) ?? '';
 
-        return FutureBuilder<List<Map<String, dynamic>>>(
-          future: CitizenDao.getCachedAlerts(),
-          builder: (context, alertsSnap) {
-            if (alertsSnap.connectionState == ConnectionState.waiting) {
-              return const Center(child: CircularProgressIndicator(color: _primaryGreen));
-            }
+  // Offline: cache mein pehle se sirf is citizen ke matched alerts hain
+  // (online pe filter hone ke baad save hue the), isliye yahan dobara
+  // filter nahi karte.
+  Widget _buildOfflineBody(BuildContext context) {
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: CitizenDao.getCachedAlerts(),
+      builder: (context, alertsSnap) {
+        if (alertsSnap.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator(color: _primaryGreen));
+        }
 
-            var cachedRaw = alertsSnap.data ?? [];
+        final cachedRaw = alertsSnap.data ?? [];
 
-            // Best-effort match against the citizen's cached address when
-            // we have one on file — the cache doesn't store the exact
-            // 'city' field the online query filters on.
-            if (cachedAddress.isNotEmpty) {
-              final filtered = cachedRaw.where((data) {
-                final targetArea = (data['targetArea'] as String?) ?? '';
-                return targetArea.isEmpty || _keywordMatch(targetArea, cachedAddress);
-              }).toList();
-              if (filtered.isNotEmpty) cachedRaw = filtered;
-            }
+        if (cachedRaw.isEmpty) {
+          return const Center(
+            child: Padding(
+              padding: EdgeInsets.symmetric(horizontal: 24),
+              child: Text(
+                "No cached alerts available offline.",
+                style: TextStyle(fontSize: 16, color: Colors.grey),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          );
+        }
 
-            if (cachedRaw.isEmpty) {
-              return const Center(
-                child: Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 24),
-                  child: Text(
-                    "No cached alerts available offline.",
-                    style: TextStyle(fontSize: 16, color: Colors.grey),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-              );
-            }
+        final alerts = cachedRaw.map((d) => AlertModel.fromCache(d)).toList();
 
-            final alerts = cachedRaw.map((d) => AlertModel.fromCache(d)).toList();
-
-            return Column(
-              children: [
-                Container(
-                  width: double.infinity,
-                  color: const Color(0xFFFFF3E0),
-                  padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-                  child: const Text(
-                    'Offline — showing last saved alerts',
-                    style: TextStyle(fontSize: 11, color: Color(0xFFE65100), fontStyle: FontStyle.italic),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-                Expanded(
-                  child: ListView.separated(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                    itemCount: alerts.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 14),
-                    itemBuilder: (context, index) {
-                      final alert = alerts[index];
-                      return _AlertCard(
-                        alert: alert,
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(builder: (_) => AlertDetailsScreen(alert: alert)),
-                          );
-                        },
+        return Column(
+          children: [
+            Container(
+              width: double.infinity,
+              color: const Color(0xFFFFF3E0),
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+              child: const Text(
+                'Offline — showing last saved alerts',
+                style: TextStyle(fontSize: 11, color: Color(0xFFE65100), fontStyle: FontStyle.italic),
+                textAlign: TextAlign.center,
+              ),
+            ),
+            Expanded(
+              child: ListView.separated(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                itemCount: alerts.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 14),
+                itemBuilder: (context, index) {
+                  final alert = alerts[index];
+                  return _AlertCard(
+                    alert: alert,
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => AlertDetailsScreen(alert: alert)),
                       );
                     },
-                  ),
-                ),
-              ],
-            );
-          },
+                  );
+                },
+              ),
+            ),
+          ],
         );
       },
     );
@@ -460,8 +576,6 @@ class _AlertCard extends StatelessWidget {
     );
   }
 }
-
-
 
 
 

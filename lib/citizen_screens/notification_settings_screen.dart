@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:smartdisaster/widgets/notification_bell.dart';
 
 class NotificationSettingsScreen extends StatefulWidget {
   const NotificationSettingsScreen({super.key});
@@ -18,6 +19,12 @@ class _NotificationSettingsScreenState
   // Custom Colors matching your app theme
   static const Color primaryDarkGreen = Color(0xFF1B5E38);
   static const Color scaffoldBg = Color(0xFFF5F5E8);
+
+  @override
+  void initState() {
+    super.initState();
+    NotificationBell.markAllRead(); // screen khulte hi badge saaf
+  }
 
   @override
   Widget build(BuildContext context) {

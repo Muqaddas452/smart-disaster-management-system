@@ -20,9 +20,9 @@ class FcmTokenService {
   // collection = kis collection mein token save karna hai (default 'citizens'
   // rakha hai taake purane call sites bina change kiye kaam karte rahein)
   static Future<void> saveFCMToken(
-    String uid, {
-    String collection = 'citizens',
-  }) async {
+      String uid, {
+        String collection = 'citizens',
+      }) async {
     try {
       // Device ka current FCM token generate karo
       final String? token = await _messaging.getToken();
@@ -49,6 +49,18 @@ class FcmTokenService {
       // Agar kuch bhi fail ho (network, permission etc) to app crash na ho,
       // sirf error print ho jaye — login/signup flow rukna nahi chahiye
       print('[FCM] Token save karte waqt error: $e');
+    }
+  }
+
+  // Logout par token hata do — warna is phone par agla login karne wale ko
+  // PEHLE user ki notifications milti rehti hain (aur pehle user ko bhi
+  // jab wo kisi aur phone par ho). Sign out se PEHLE call karein.
+  static Future<void> clearFCMToken(String uid, {String collection = 'citizens'}) async {
+    try {
+      await _firestore.collection(collection).doc(uid).update({'fcmToken': FieldValue.delete()});
+      await _messaging.deleteToken(); // naya token banega agle login par
+    } catch (e) {
+      print('[FCM] Token clear karte waqt error: $e');
     }
   }
 

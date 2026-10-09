@@ -3,7 +3,10 @@ import 'package:firebase_auth/firebase_auth.dart'; // to log the user in with Fi
 import 'package:cloud_firestore/cloud_firestore.dart'; // to check the user's role in authIndex
 import 'rescue_home_screen.dart'; // Rescue Team Dashboard, shown after successful login
 import 'member_verification_screen.dart'; // used for "New member? Join here" link
-import 'pending_approval_screen.dart'; // NEW — pending leaders/members get sent here instead of a dead-end error
+import 'pending_approval_screen.dart';
+import 'package:smartdisaster/services/fcm_token_service.dart';
+import 'package:smartdisaster/services/email_verification.dart';
+import 'package:smartdisaster/services/team_publish_service.dart'; // NEW — pending leaders/members get sent here instead of a dead-end error
 import '/citizen_screens/forgotpassword.dart'; // shared Forgot Password screen, one folder up in lib/
 
 class RescueLoginScreen extends StatefulWidget {
@@ -67,6 +70,15 @@ class _RescueLoginScreenState extends State<RescueLoginScreen> {
       );
 
       final String uid = userCredential.user!.uid; // this user's unique Firebase ID
+
+      // Email verify nahi hui => AuthWrapper verify screen dikhata hai.
+      if (needsEmailVerification(userCredential.user)) {
+        if (mounted) Navigator.of(context).popUntil((route) => route.isFirst);
+        return;
+      }
+
+      // Verify ho chuki: ruki hui team request admin ko bhejo.
+      await publishPendingTeam(uid);
 
       // STEP 2: look up this uid in "authIndex" to confirm they are a rescue team user or member
       final authIndexDoc = await FirebaseFirestore.instance
@@ -136,6 +148,11 @@ class _RescueLoginScreenState extends State<RescueLoginScreen> {
         'isOnline': true,
         'lastSeenAt': FieldValue.serverTimestamp(),
       });
+
+      // Save this device's FCM token so leaders/members receive task
+      // notifications (previously only citizens and brand-new members did).
+      await FcmTokenService.saveFCMToken(uid, collection: 'rescueTeamUsers');
+      FcmTokenService.listenForTokenRefresh(uid, collection: 'rescueTeamUsers');
 
       // STEP 4: navigate to Rescue Team Dashboard with dynamic params
       if (mounted) {

@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart'; // to read/write Firestore database
 import 'package:firebase_auth/firebase_auth.dart'; // to create/sign in Firebase Auth accounts
 import 'package:flutter/material.dart'; // needed for BuildContext and SnackBar
+import 'package:smartdisaster/services/email_verification.dart';
 
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance; // shortcut to Firebase Auth
@@ -69,6 +70,16 @@ class AuthService {
       );
 
       String uid = userCredential.user!.uid;
+
+      // Email verify nahi hui => AuthWrapper (sab se neeche wali screen) verify
+      // screen dikhata hai; login screen hata kar wahan pohanchao.
+      if (needsEmailVerification(userCredential.user)) {
+        if (context.mounted) {
+          _showSnackBar(context, "Please verify your email to continue.", Colors.orange);
+          Navigator.of(context).popUntil((route) => route.isFirst);
+        }
+        return;
+      }
 
       // Step B: check "authIndex" first to find out this user's role
       DocumentSnapshot authIndexDoc =

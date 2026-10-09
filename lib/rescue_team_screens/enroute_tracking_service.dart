@@ -31,8 +31,9 @@ class EnrouteTrackingService {
 
   StreamSubscription<Position>? _subscription;
   String? _activeTaskId;
+  bool _starting = false; // startTracking() chal rahi hai (duplicate start rokne ke liye)
 
-  bool get isTracking => _subscription != null;
+  bool get isTracking => _subscription != null || _starting;
   String? get activeTaskId => _activeTaskId;
 
   Future<bool> _ensurePermission() async {
@@ -59,6 +60,11 @@ class EnrouteTrackingService {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return false;
 
+    // Pehle se start ho raha hai (jaise screen ka resume aur button dono
+    // ek saath) — dobara subscription na banao, warna location do dafa likhi
+    // jati hai aur ek subscription kabhi cancel nahi hoti.
+    if (_starting) return true;
+
     // If we're already tracking a different task, stop that one first
     if (_subscription != null && _activeTaskId != taskId) {
       await stopTracking();
@@ -67,6 +73,15 @@ class EnrouteTrackingService {
       return true; // this task is already being tracked
     }
 
+    _starting = true;
+    try {
+      return await _begin(taskId, uid);
+    } finally {
+      _starting = false;
+    }
+  }
+
+  Future<bool> _begin(String taskId, String uid) async {
     final hasPermission = await _ensurePermission();
     if (!hasPermission) return false;
 

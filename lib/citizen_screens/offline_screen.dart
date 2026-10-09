@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'report_status_screen.dart';
@@ -13,6 +14,7 @@ class OfflineStatusScreen extends StatefulWidget {
 class _OfflineStatusScreenState extends State<OfflineStatusScreen>
     with SingleTickerProviderStateMixin {
   late AnimationController _rotateController;
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
 
   @override
   void initState() {
@@ -25,9 +27,11 @@ class _OfflineStatusScreenState extends State<OfflineStatusScreen>
     )..repeat();
 
     // ✅ Auto-listen for internet — jab aaye toh success screen pe jao
-    Connectivity().onConnectivityChanged.listen((result) {
+    _connectivitySub = Connectivity().onConnectivityChanged.listen((results) {
       if (!mounted) return;
-      final isOnline = result != ConnectivityResult.none;
+      // connectivity_plus 6.x emits a List, so check the list properly.
+      final isOnline =
+          results.isNotEmpty && !results.contains(ConnectivityResult.none);
       if (isOnline) {
         Navigator.pushReplacement(
           context,
@@ -39,6 +43,7 @@ class _OfflineStatusScreenState extends State<OfflineStatusScreen>
 
   @override
   void dispose() {
+    _connectivitySub?.cancel();
     _rotateController.dispose();
     super.dispose();
   }

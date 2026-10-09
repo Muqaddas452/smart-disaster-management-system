@@ -1,6 +1,8 @@
+import 'dart:math' as math;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../models/polygon_model.dart';
+import '../utils/priority_helper.dart';
 
 class MapService {
   MapService._();
@@ -18,7 +20,7 @@ class MapService {
     return _firestore
         .collection('affected_zones')
         .orderBy('createdAt', descending: true)
-        .limit(1)
+        .limit(15) // home screen in mein se pehla HIGH priority wala chunti hai
         .snapshots();
   }
   Stream<List<PolygonModel>> getAffectedZones() {
@@ -62,7 +64,7 @@ class MapService {
 
         // Resolved tasks shouldn't keep showing a zone on the map.
         final String status = (data['status'] ?? '').toString();
-        if (status == 'resolved') return null;
+        if (status == 'resolved' || status == 'rejected') return null;
 
         // Agar task ke pas lat/lng hain toh unka buffer circle polygon bana lein
         // Accepts either naming style (latitude/longitude OR lat/lng), or a
@@ -79,7 +81,7 @@ class MapService {
           return PolygonModel(
             id: doc.id,
             type: data['type'] ?? 'Task Zone',
-            severity: data['priority'] ?? 'medium',
+            severity: resolvePriority(data),
             color: 'orange',
             coordinates: _createCircleCoordinates(lat, lng, 1000), // 1km radius circle
             createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
@@ -92,13 +94,18 @@ class MapService {
 
 // Helper method for circular coordinates
   List<LatLng> _createCircleCoordinates(double lat, double lng, double radiusInMeters) {
-    // Circle points generator logic ya simple box coordinates
-    return [
-      LatLng(lat + 0.005, lng),
-      LatLng(lat, lng + 0.005),
-      LatLng(lat - 0.005, lng),
-      LatLng(lat, lng - 0.005),
-    ];
+    // Approximate circle: 36 points on a ring of `radiusInMeters` around
+    // the task location (previously radius was ignored and a ~550m diamond
+    // was drawn instead).
+    const int steps = 36;
+    const double metersPerDegLat = 111320.0;
+    final double dLat = radiusInMeters / metersPerDegLat;
+    final double dLng =
+        radiusInMeters / (metersPerDegLat * math.cos(lat * math.pi / 180));
+    return List.generate(steps, (i) {
+      final double a = 2 * math.pi * i / steps;
+      return LatLng(lat + dLat * math.sin(a), lng + dLng * math.cos(a));
+    });
   }
 
 }

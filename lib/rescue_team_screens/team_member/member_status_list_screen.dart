@@ -19,6 +19,7 @@ class MemberStatusListScreen extends StatelessWidget {
     'assigned': Color(0xFFB25E00),
     'enroute': Color(0xFF1A4FA0),
     'in_progress': Color(0xFF1B5E38),
+    'completed': Color(0xFF1B5E38),
     'resolved': Color(0xFF6B6B6B),
     'rejected': Color(0xFFB3261E),
   };
@@ -27,6 +28,7 @@ class MemberStatusListScreen extends StatelessWidget {
     'assigned': 'Assigned',
     'enroute': 'Enroute',
     'in_progress': 'In Progress',
+    'completed': 'Completed',
     'resolved': 'Resolved',
     'rejected': 'Rejected',
   };
@@ -53,6 +55,17 @@ class MemberStatusListScreen extends StatelessWidget {
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator(color: kGreen));
+          }
+          if (snapshot.hasError) {
+            // orderBy + arrayContains ko Firestore composite index chahiye;
+            // na ho to pehle yahan "No tasks" dikhta tha, error nahi.
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text('Could not load tasks:\n${snapshot.error}',
+                    textAlign: TextAlign.center, style: const TextStyle(color: Colors.red)),
+              ),
+            );
           }
           final docs = snapshot.data?.docs ?? [];
           if (docs.isEmpty) {
@@ -94,7 +107,15 @@ class MemberStatusListScreen extends StatelessWidget {
   Widget _taskTile(BuildContext context, String taskId, Map<String, dynamic> data, {required bool dim}) {
     final String type = data['type'] ?? 'Task';
     final String address = data['address'] ?? 'Location unavailable';
-    final String status = data['status'] ?? 'assigned';
+    // Task-level status 'assigned' tab tak rehta hai jab tak SAB members
+    // complete na karen — member ko apna status dikhao.
+    String status = data['status'] ?? 'assigned';
+    if (status == 'assigned') {
+      final myUid = FirebaseAuth.instance.currentUser?.uid;
+      final Map ms = data['memberStatuses'] is Map ? data['memberStatuses'] as Map : {};
+      final mine = myUid != null ? ms[myUid] : null;
+      if (mine is String && mine.isNotEmpty) status = mine;
+    }
     final color = _statusColors[status] ?? Colors.grey;
     final label = _statusLabels[status] ?? status;
 

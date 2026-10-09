@@ -1,5 +1,6 @@
 import 'package:sqflite/sqflite.dart';
 import 'db_helper.dart';
+import '../utils/priority_helper.dart';
 
 /// Data Access Object for the Rescue side (leader + member):
 /// profile, tasks, and the home screen's live alert banner.
@@ -78,9 +79,9 @@ class RescueDao {
         'cached_tasks',
         {
           'taskId': task['taskId'],
-          'type': task['type'],
-          'priority': task['priority'],
-          'address': task['address'],
+          'type': taskType(task),
+          'priority': resolvePriority(task),
+          'address': taskAddress(task),
           'description': task['description'],
           'status': task['status'],
           'teamId': task['teamId'],
@@ -125,9 +126,9 @@ class RescueDao {
         'cached_tasks',
         {
           'taskId': task['taskId'],
-          'type': task['type'],
-          'priority': task['priority'],
-          'address': task['address'],
+          'type': taskType(task),
+          'priority': resolvePriority(task),
+          'address': taskAddress(task),
           'description': task['description'],
           'status': task['status'],
           'teamId': task['teamId'],

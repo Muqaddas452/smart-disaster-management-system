@@ -97,9 +97,9 @@ class PolygonModel {
     return PolygonModel(
       id: doc.id,
 
-      type: data['type'] ?? 'Unknown',
+      type: (data['type'] ?? data['disasterType'] ?? 'Unknown').toString(),
 
-      severity: data['severity'] ?? 'Low',
+      severity: (data['severity'] ?? data['riskLevel'] ?? 'Low').toString(),
 
       color: data['color'] ?? 'red',
 
@@ -122,8 +122,8 @@ class PolygonModel {
 
     return PolygonModel(
       id: docId,
-      type: data['type'] ?? 'Unknown',
-      severity: data['severity'] ?? 'Low',
+      type: (data['type'] ?? data['disasterType'] ?? 'Unknown').toString(),
+      severity: (data['severity'] ?? data['riskLevel'] ?? 'Low').toString(),
       color: data['color'] ?? 'red',
       coordinates: coordinateList.map((point) {
         return LatLng(

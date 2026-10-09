@@ -19,20 +19,44 @@ class _AssignMembersScreenState extends State<AssignMembersScreen> {
   final Set<String> _selectedUids = {};
   bool _isDispatching = false;
 
-  // Active statuses that mean a member is currently out on a task and
-  // should show as "Busy" instead of "Available".
   static const List<String> _activeTaskStatuses = ['assigned', 'enroute', 'in_progress'];
 
-  // Checks whether this member currently has an active (not yet resolved)
-  // task assigned to them.
-  Future<bool> _isMemberBusy(String uid) async {
-    final snap = await FirebaseFirestore.instance
-        .collection('tasks')
-        .where('assignedMemberIds', arrayContains: uid)
-        .where('status', whereIn: _activeTaskStatuses)
-        .limit(1)
-        .get();
-    return snap.docs.isNotEmpty;
+  @override
+  void initState() {
+    super.initState();
+    _preselectCurrentMembers();
+  }
+
+  // "Reassign Members" pehle khali list se shuru hota tha — leader ko sab
+  // dobara tick karne parte the, warna purane members chupke se hat jate the.
+  Future<void> _preselectCurrentMembers() async {
+    try {
+      final snap = await FirebaseFirestore.instance.collection('tasks').doc(widget.taskId).get();
+      final ids = List.from(snap.data()?['assignedMemberIds'] ?? []);
+      if (mounted && ids.isNotEmpty) {
+        setState(() => _selectedUids.addAll(ids.map((e) => e.toString())));
+      }
+    } catch (_) {}
+  }
+
+  // Busy = kisi AUR active task par assigned aur us par apna hissa abhi
+  // 'completed' nahi kiya. (Pehle: task-level status dekha jata tha, to
+  // member apna kaam khatam kar ke bhi Busy dikhta tha; aur har checkbox tap
+  // par har row ek nayi Firestore query chalati thi, jo composite index ke
+  // baghair silently fail ho kar sab ko "Available" dikha deti thi.)
+  Set<String> _busyUids(List<QueryDocumentSnapshot<Map<String, dynamic>>> docs) {
+    final busy = <String>{};
+    for (final d in docs) {
+      if (d.id == widget.taskId) continue; // yehi task ginti mein nahi
+      final data = d.data();
+      if (!_activeTaskStatuses.contains(data['status'])) continue;
+      final ids = List.from(data['assignedMemberIds'] ?? []);
+      final statuses = Map<String, dynamic>.from(data['memberStatuses'] ?? {});
+      for (final id in ids) {
+        if (statuses[id] != 'completed') busy.add(id.toString());
+      }
+    }
+    return busy;
   }
 
   Future<void> _dispatch(List<QueryDocumentSnapshot<Map<String, dynamic>>> members) async {
@@ -51,12 +75,27 @@ class _AssignMembersScreenState extends State<AssignMembersScreen> {
         .toList();
 
     try {
-      await FirebaseFirestore.instance.collection('tasks').doc(widget.taskId).update({
+      final taskRef = FirebaseFirestore.instance.collection('tasks').doc(widget.taskId);
+
+      // Jo members is dafa hata diye gaye, un ka purana status aur live
+      // location task se saaf karo, warna wo ghost marker/status ban kar
+      // reh jate the (aur unka phone location likhta rehta tha).
+      final before = await taskRef.get();
+      final oldIds =
+      List.from(before.data()?['assignedMemberIds'] ?? []).map((e) => e.toString()).toSet();
+      final removed = oldIds.difference(_selectedUids);
+
+      final Map<String, dynamic> updates = {
         'assignedMemberIds': _selectedUids.toList(),
         'assignedMembers': assignedMembers,
         'status': 'assigned',
         'assignedAt': FieldValue.serverTimestamp(),
-      });
+      };
+      for (final uid in removed) {
+        updates['memberStatuses.$uid'] = FieldValue.delete();
+        updates['memberLocations.$uid'] = FieldValue.delete();
+      }
+      await taskRef.update(updates);
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -117,15 +156,15 @@ class _AssignMembersScreenState extends State<AssignMembersScreen> {
       ),
       body: widget.teamId.trim().isEmpty
           ? const Center(
-              child: Padding(
-                padding: EdgeInsets.all(24),
-                child: Text(
-                  'Could not determine your team. Please go back and try again.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.black54),
-                ),
-              ),
-            )
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text(
+            'Could not determine your team. Please go back and try again.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.black54),
+          ),
+        ),
+      )
           : StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: FirebaseFirestore.instance
             .collection('rescueTeamUsers')
@@ -141,91 +180,91 @@ class _AssignMembersScreenState extends State<AssignMembersScreen> {
             return const Center(child: Text('No team members found'));
           }
 
-          return Column(
-            children: [
-              Expanded(
-                child: ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: members.length,
-                  itemBuilder: (context, i) {
-                    final m = members[i];
-                    final name = m.data()['name'] ?? 'Member';
-                    final specialization = m.data()['specialization'] ?? '';
-                    // Older member docs won't have this field yet, so default
-                    // to "online" rather than wrongly showing everyone offline.
-                    final bool isOnline = m.data()['isOnline'] ?? true;
-                    final selected = _selectedUids.contains(m.id);
-                    return Container(
-                      margin: const EdgeInsets.only(bottom: 10),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: selected ? kGreen : Colors.grey.shade200, width: selected ? 1.5 : 1),
-                      ),
-                      child: CheckboxListTile(
-                        activeColor: kGreen,
-                        value: selected,
-                        onChanged: (v) {
-                          setState(() {
-                            if (v == true) {
-                              _selectedUids.add(m.id);
-                            } else {
-                              _selectedUids.remove(m.id);
-                            }
-                          });
-                        },
-                        title: Text(name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                        subtitle: Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              if (specialization.toString().isNotEmpty)
-                                Padding(
-                                  padding: const EdgeInsets.only(bottom: 4),
-                                  child: Text(specialization,
-                                      style: const TextStyle(fontSize: 12, color: Colors.black45)),
-                                ),
-                              FutureBuilder<bool>(
-                                future: _isMemberBusy(m.id),
-                                builder: (context, statusSnap) {
-                                  // While the busy-check is loading, don't
-                                  // block on it — fall back to "available"
-                                  // look until we know for sure.
-                                  final bool isBusy = statusSnap.data ?? false;
-                                  return _statusChip(isOnline: isOnline, isBusy: isBusy);
-                                },
-                              ),
-                            ],
+          return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+            stream: FirebaseFirestore.instance
+                .collection('tasks')
+                .where('teamId', isEqualTo: widget.teamId)
+                .snapshots(),
+            builder: (context, taskSnap) {
+              final Set<String> busyUids = _busyUids(taskSnap.data?.docs ?? []);
+              return Column(
+                children: [
+                  Expanded(
+                    child: ListView.builder(
+                      padding: const EdgeInsets.all(16),
+                      itemCount: members.length,
+                      itemBuilder: (context, i) {
+                        final m = members[i];
+                        final name = m.data()['name'] ?? 'Member';
+                        final specialization = m.data()['specialization'] ?? '';
+                        // Older member docs won't have this field yet, so default
+                        // to "online" rather than wrongly showing everyone offline.
+                        final bool isOnline = m.data()['isOnline'] ?? true;
+                        final selected = _selectedUids.contains(m.id);
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 10),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: selected ? kGreen : Colors.grey.shade200, width: selected ? 1.5 : 1),
                           ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: SizedBox(
-                  width: double.infinity,
-                  height: 52,
-                  child: ElevatedButton(
-                    onPressed: _isDispatching ? null : () => _dispatch(members),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: kGreen,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          child: CheckboxListTile(
+                            activeColor: kGreen,
+                            value: selected,
+                            onChanged: (v) {
+                              setState(() {
+                                if (v == true) {
+                                  _selectedUids.add(m.id);
+                                } else {
+                                  _selectedUids.remove(m.id);
+                                }
+                              });
+                            },
+                            title: Text(name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                            subtitle: Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  if (specialization.toString().isNotEmpty)
+                                    Padding(
+                                      padding: const EdgeInsets.only(bottom: 4),
+                                      child: Text(specialization,
+                                          style: const TextStyle(fontSize: 12, color: Colors.black45)),
+                                    ),
+                                  _statusChip(isOnline: isOnline, isBusy: busyUids.contains(m.id)),
+                                ],
+                              ),
+                            ),
+                          ),
+                        );
+                      },
                     ),
-                    child: _isDispatching
-                        ? const SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
-                        : const Text('Dispatch selected members',
-                        style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
                   ),
-                ),
-              ),
-            ],
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: SizedBox(
+                      width: double.infinity,
+                      height: 52,
+                      child: ElevatedButton(
+                        onPressed: _isDispatching ? null : () => _dispatch(members),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: kGreen,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        child: _isDispatching
+                            ? const SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
+                            : const Text('Dispatch selected members',
+                            style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
           );
         },
       ),

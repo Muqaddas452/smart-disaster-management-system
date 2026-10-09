@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:smartdisaster/services/fcm_token_service.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'notification_settings_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -12,10 +13,9 @@ import 'feedback_screen.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:flutter/services.dart'; //for clipboard
-
+// ── AUTH WRAPPER ──────────────────────────────────────────────────
+import 'package:smartdisaster/main.dart';
 // ── OFFLINE SUPPORT ────────────────────────────────────────────────
-// Adjust these two import paths to match where db_helper.dart and
-// citizen_dao.dart actually live in your project.
 import 'package:smartdisaster/database//db_helper.dart';
 import 'package:smartdisaster/database/citizen_dao.dart';
 
@@ -54,6 +54,46 @@ class _ViewProfileScreenState extends State<ViewProfileScreen> {
   void dispose() {
     _connectivitySub?.cancel();
     super.dispose();
+  }
+
+  // ── LOGOUT (confirmation dialog + clean navigation) ──────────────
+  Future<void> _confirmLogout(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Logout'),
+        content: const Text('Are you sure you want to logout from your account?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Logout', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid != null) {
+        // Citizen side: token 'citizens' collection se clear hoga
+        await FcmTokenService.clearFCMToken(uid, collection: 'citizens');
+      }
+      await FirebaseAuth.instance.signOut();
+
+      // Poora stack clear karke fresh AuthWrapper push karte hain.
+      // AuthWrapper signed-out user dekh kar WelcomeScreen dikha dega,
+      // chahe is screen tak kisi bhi raaste se aaye hon.
+      if (context.mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const AuthWrapper()),
+              (route) => false,
+        );
+      }
+    }
   }
 
   void _showShareOptionsSheet(BuildContext context) {
@@ -402,12 +442,7 @@ class _ViewProfileScreenState extends State<ViewProfileScreen> {
                   subtitle: 'Sign out from your account',
                   textColor: Colors.red,
                   iconColor: Colors.red,
-                  onTap: () async {
-                    await FirebaseAuth.instance.signOut();
-                    if (context.mounted) {
-                      Navigator.of(context).popUntil((route) => route.isFirst);
-                    }
-                  },
+                  onTap: () => _confirmLogout(context),
                 ),
               ],
             ),
@@ -469,9 +504,8 @@ class _ViewProfileScreenState extends State<ViewProfileScreen> {
     );
   }
 }
-
 // ==========================================================
-// PERSONAL DETAILS SCREEN (Matching 1000141088.jpg)
+// PERSONAL DETAILS SCREEN
 // ==========================================================
 class PersonalDetailsScreen extends StatelessWidget {
   final Map<String, dynamic> userData;

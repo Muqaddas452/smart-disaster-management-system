@@ -7,8 +7,33 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import '../database/db_report_helper.dart';
 
 class ReportSyncService {
-  // ── Ek baar manually sync trigger karna (app open hone par call karo)
+  // Guard: home screen, report screen and connectivity listener can all
+  // trigger a sync at once — without this the same report is uploaded twice.
+  static bool _isSyncing = false;
+
+  /// Report ka fixed Firestore id: user + report banne ka waqt. Online aur
+  /// offline-sync dono isi se id banate hain, is liye ek report ki ek hi copy.
+  static String reportDocId(String uid, String isoTimestamp) {
+    final ms = DateTime.tryParse(isoTimestamp)?.millisecondsSinceEpoch ??
+        isoTimestamp.hashCode;
+    return '${uid}_$ms';
+  }
+
   static Future<SyncResult> syncPendingReports() async {
+    if (_isSyncing) {
+      return SyncResult(
+          success: true, message: 'Sync already in progress.', syncedCount: 0);
+    }
+    _isSyncing = true;
+    try {
+      return await _doSync();
+    } finally {
+      _isSyncing = false;
+    }
+  }
+
+  // ── Ek baar manually sync trigger karna (app open hone par call karo)
+  static Future<SyncResult> _doSync() async {
     try {
       // 1. Internet check karo
       final connectivityResult = await Connectivity().checkConnectivity();
@@ -43,21 +68,26 @@ class ReportSyncService {
 
       for (final report in unsyncedReports) {
         try {
-          await firestore.collection('manual_reports').add({
-            'name': report['name'],
-            'phone': report['phone'],
-            'incident_type': report['emergencyType'],   // Firebase field name match
-            'description': report['description'],
-            'severity_level': report['severity'],        // Firebase field name match
-            'location': report['location'],
-            'latitude': report['latitude'],
-            'longitude': report['longitude'],
-            'timestamp': FieldValue.serverTimestamp(),   // Firebase ka proper timestamp
-            'localTimestamp': report['timestamp'],       // original local time b rakhte hain
-            'reportedBy': uid,
-            'status': 'Pending',
-            'syncedFromOffline': true,                   // identify karne k liye k offline tha
-          });
+          final docRef = firestore.collection('manual_reports').doc(
+              reportDocId(uid, report['timestamp'].toString()));
+          final existing = await docRef.get();
+          if (!existing.exists) {
+            await docRef.set({
+              'name': report['name'],
+              'phone': report['phone'],
+              'incident_type': report['emergencyType'],   // Firebase field name match
+              'description': report['description'],
+              'severity_level': report['severity'],        // Firebase field name match
+              'location': report['location'],
+              'latitude': report['latitude'],
+              'longitude': report['longitude'],
+              'timestamp': FieldValue.serverTimestamp(),   // Firebase ka proper timestamp
+              'localTimestamp': report['timestamp'],       // original local time b rakhte hain
+              'reportedBy': uid,
+              'status': 'Pending',
+              'syncedFromOffline': true,                   // identify karne k liye k offline tha
+            });
+          }
 
           // 4. Successfully sync hua to local DB mein mark karo
           await DBReportHelper.markAsSynced(report['id'] as int);

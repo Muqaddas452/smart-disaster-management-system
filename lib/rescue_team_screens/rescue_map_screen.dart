@@ -1,9 +1,14 @@
+import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 import 'package:smartdisaster/widgets/map/disaster_map.dart';
+import 'package:smartdisaster/database/map_icon_helper.dart';
+import 'package:smartdisaster/utils/priority_helper.dart';
+import 'package:smartdisaster/services/map_service.dart';
+import 'package:smartdisaster/rescue_team_screens/view_task_screen.dart';
 
 /// Rescue Team Map Screen.
 ///
@@ -55,6 +60,9 @@ class MapScreen extends StatelessWidget {
 
         return DefaultTabController(
           length: 2,
+          // "Tasks" tab pehle khulta hai: isi mein alert/task location,
+          // affected zone aur members ki live location ek saath dikhti hain.
+          initialIndex: 1,
           child: Scaffold(
             appBar: AppBar(
               title: const Text(
@@ -111,6 +119,38 @@ class _TasksMap extends StatefulWidget {
 class _TasksMapState extends State<_TasksMap> {
   GoogleMapController? _controller;
   String _lastFittedKey = '';
+
+  // Affected zones (polygons) bhi isi map par peeche dikhte hain, taake
+  // alert ka area, task aur members ek hi nazar mein aa jayen.
+  StreamSubscription? _zonesSub;
+  Set<Polygon> _polygons = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _zonesSub = MapService.instance.getAffectedZones().listen((zones) {
+      if (!mounted) return;
+      setState(() {
+        _polygons = zones
+            .where((z) => z.coordinates.length >= 3)
+            .map((z) => Polygon(
+          polygonId: z.polygonId,
+          points: z.coordinates,
+          strokeWidth: 2,
+          strokeColor: z.strokeColor,
+          fillColor: z.fillColor,
+        ))
+            .toSet();
+      });
+    }, onError: (_) {});
+  }
+
+  @override
+  void dispose() {
+    _zonesSub?.cancel();
+    _controller?.dispose();
+    super.dispose();
+  }
 
   Stream<QuerySnapshot<Map<String, dynamic>>> _stream() {
     Query<Map<String, dynamic>> query =
@@ -192,11 +232,13 @@ class _TasksMapState extends State<_TasksMap> {
         final Set<Marker> markers = {};
         final List<LatLng> points = [];
         int skippedNoLocation = 0;
+        int taskCount = 0; // sirf task markers (member markers alag)
 
         for (final doc in docs) {
           final data = doc.data();
 
-          if ((data['status'] ?? '').toString() == 'resolved') continue;
+          final String st = (data['status'] ?? '').toString();
+          if (st == 'resolved' || st == 'rejected') continue;
 
           final double? lat = _toDouble(data['lat'] ?? data['latitude']);
           final double? lng = _toDouble(data['lng'] ?? data['longitude']);
@@ -206,11 +248,12 @@ class _TasksMapState extends State<_TasksMap> {
           }
 
           final position = LatLng(lat, lng);
+          taskCount++;
           points.add(position);
 
           final String type = (data['type'] ?? 'Task').toString();
           final String address = (data['address'] ?? '').toString();
-          final String priority = (data['priority'] ?? 'medium').toString();
+          final String priority = resolvePriority(data);
           final String status = (data['status'] ?? '').toString();
 
           markers.add(
@@ -225,9 +268,83 @@ class _TasksMapState extends State<_TasksMap> {
                   '$priority priority',
                   if (status.isNotEmpty) status,
                 ].join(' • '),
+                // info window par tap => poori task details
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => ViewTaskScreen(taskId: doc.id)),
+                  );
+                },
               ),
             ),
           );
+
+          // Assigned members ki LIVE location ("Naam · Status" label ke saath).
+          // Leader ko team ke sab members; member ko sirf apni.
+          final Map<String, dynamic> memberLocations =
+          Map<String, dynamic>.from(data['memberLocations'] ?? {});
+          final Map<String, dynamic> memberStatuses =
+          Map<String, dynamic>.from(data['memberStatuses'] ?? {});
+          final List assignedMembers = data['assignedMembers'] ?? [];
+          final List assignedIds = data['assignedMemberIds'] ?? [];
+          final String? myUid = FirebaseAuth.instance.currentUser?.uid;
+
+          final Iterable<String> visibleUids = widget.isLeader
+              ? assignedIds.map((e) => e.toString())
+              : (myUid != null ? [myUid] : <String>[]);
+
+          for (final uid in visibleUids) {
+            final loc = memberLocations[uid];
+            if (loc is! Map || loc['lat'] is! num || loc['lng'] is! num) continue;
+
+            final LatLng mPos =
+            LatLng((loc['lat'] as num).toDouble(), (loc['lng'] as num).toDouble());
+            points.add(mPos);
+
+            String name = uid == myUid ? 'You' : 'Member';
+            if (uid != myUid) {
+              for (final m in assignedMembers) {
+                if (m is Map && (m['uid'] == uid || m['id'] == uid)) {
+                  name = (m['name'] ?? 'Member').toString();
+                  break;
+                }
+              }
+            }
+
+            final String? st = memberStatuses[uid] as String?;
+            final String stLabel = st == 'in_progress'
+                ? 'In Progress'
+                : st == 'completed'
+                ? 'Completed'
+                : st == 'enroute'
+                ? 'Enroute'
+                : 'Assigned';
+            final Color stColor = st == 'enroute'
+                ? Colors.orange.shade700
+                : st == 'in_progress'
+                ? Colors.blue.shade700
+                : st == 'completed'
+                ? Colors.green.shade800
+                : Colors.black54;
+
+            final String text = '$name · $stLabel';
+            final String cacheKey = 'map_$text';
+            final BitmapDescriptor? labelIcon = LabelMarkerCache.lookup(cacheKey);
+            if (labelIcon == null) {
+              LabelMarkerCache.prepare(cacheKey, text, stColor, () {
+                if (mounted) setState(() {});
+              });
+            }
+
+            markers.add(
+              Marker(
+                markerId: MarkerId('member_${doc.id}_$uid'),
+                position: mPos,
+                icon: labelIcon ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
+                infoWindow: InfoWindow(title: name, snippet: '$stLabel • $type'),
+              ),
+            );
+          }
         }
 
         // Re-fit only when the set of visible tasks actually changes, so the
@@ -241,14 +358,14 @@ class _TasksMapState extends State<_TasksMap> {
         String? banner;
         if (snapshot.connectionState == ConnectionState.waiting && docs.isEmpty) {
           banner = 'Loading tasks...';
-        } else if (markers.isEmpty && skippedNoLocation > 0) {
+        } else if (taskCount == 0 && skippedNoLocation > 0) {
           banner = '$skippedNoLocation task(s) have no location saved';
-        } else if (markers.isEmpty) {
+        } else if (taskCount == 0) {
           banner = 'No active tasks assigned';
         } else if (skippedNoLocation > 0) {
-          banner = '${markers.length} task(s) shown · $skippedNoLocation without location';
+          banner = '$taskCount task(s) shown · $skippedNoLocation without location';
         } else {
-          banner = '${markers.length} active task(s)';
+          banner = '$taskCount active task(s)';
         }
 
         return Stack(
@@ -259,6 +376,7 @@ class _TasksMapState extends State<_TasksMap> {
                 zoom: 5,
               ),
               markers: markers,
+              polygons: _polygons,
               zoomControlsEnabled: true,
               myLocationButtonEnabled: false,
               mapToolbarEnabled: true,
